@@ -1,5 +1,4 @@
 node_modules/
-tools/
 .env
 .DS_Store
 Thumbs.db
