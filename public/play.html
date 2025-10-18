@@ -1,0 +1,38 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OsteoGame Play</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
+    <style>
+      body, html, #game { height: 100%; }
+      #overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(7,8,11,0.9); }
+      #overlay .card { width: min(92vw, 460px); }
+    </style>
+  </head>
+  <body>
+    <div id="game"></div>
+    <div id="overlay">
+      <div class="card col" style="gap:12px;">
+        <h3>Join OsteoGame</h3>
+        <div class="row"><input id="room" placeholder="Room code (e.g., ABC123)" maxlength="10" /></div>
+        <div class="row"><input id="name" placeholder="Display name" maxlength="16" /></div>
+        <div class="row"><input id="pin" placeholder="Room PIN (if required)" /></div>
+        <div class="row">
+          <label>Team:</label>
+          <select id="team">
+            <option value="A">A</option>
+            <option value="B">B</option>
+          </select>
+        </div>
+        <button id="join">Join</button>
+        <div id="error" class="muted"></div>
+      </div>
+    </div>
+    <div id="roundHud" style="position:fixed; top:8px; left:50%; transform:translateX(-50%); z-index:10; color:#e6eef7; font-family:monospace; background:rgba(13,15,20,0.6); border:1px solid #2a3145; padding:6px 10px; border-radius:8px; display:none"></div>
+    <script src="/client.js"></script>
+  </body>
+  </html>
