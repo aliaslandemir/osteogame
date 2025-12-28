@@ -13,6 +13,7 @@
   let pelletTypes = [];
   const pelletMap = new Map();
   const effectLabels = new Map();
+  const effectColors = new Map();
   let selectedCellType = null;
 
   const socket = io();
@@ -74,14 +75,17 @@
       pelletTypes = payload.pelletTypes.map((pt) => ({ ...pt }));
       pelletMap.clear();
       effectLabels.clear();
+      effectColors.clear();
       for (const pt of pelletTypes) {
         pelletMap.set(pt.id, pt);
         if (pt.effect?.kind) {
           effectLabels.set(pt.effect.kind, `${pt.label} surge`);
+          effectColors.set(pt.effect.kind, pt.color);
         }
       }
       if (!effectLabels.has('flow_shear')) {
         effectLabels.set('flow_shear', 'Fluid shear');
+        effectColors.set('flow_shear', 0x63e6be);
       }
     }
     renderCellOptions();
@@ -134,13 +138,14 @@
     cam.setRoundPixels(true);
 
     hudText = this.add.text(8, 8, '', {
-      fontFamily: 'monospace',
+      fontFamily: 'Space Grotesk, Fira Code, monospace',
       fontSize: 14,
       color: '#e6eef7',
     }).setScrollFactor(0).setDepth(2000);
+    hudText.setLineSpacing(4);
 
-    statusText = this.add.text(8, 28, '', {
-      fontFamily: 'monospace',
+    statusText = this.add.text(8, 52, '', {
+      fontFamily: 'Space Grotesk, Fira Code, monospace',
       fontSize: 13,
       color: '#d6adff',
     }).setScrollFactor(0).setDepth(2000);
@@ -223,14 +228,15 @@
   }
 
   function renderWorld(scene) {
+    const world = lastState?.world || { width: 4000, height: 4000 };
     gfx.clear();
+    drawBackdrop(world);
     // background grid even before state arrives
-    drawGrid();
+    drawGrid(world);
     if (!lastState) {
       return;
     }
 
-    const world = lastState.world || { width: 4000, height: 4000 };
     cam.setBounds(0, 0, world.width, world.height);
 
     const me = lastState.players.find((p) => p.id === playerId) || lastState.players[0];
@@ -253,50 +259,67 @@
     updateHud(me);
   }
 
-  function drawGrid() {
+  function drawBackdrop(world) {
+    const pad = 500;
+    gfx.fillStyle(0x060912, 1);
+    gfx.fillRect(-pad, -pad, world.width + pad * 2, world.height + pad * 2);
+    gfx.lineStyle(2, 0x0f1728, 0.6);
+    gfx.strokeRect(0, 0, world.width, world.height);
+  }
+
+  function drawGrid(world) {
     const step = 200;
-    gfx.lineStyle(1, 0x18202b, 0.5);
-    for (let x = -2000; x <= 6000; x += step) {
-      gfx.lineBetween(x, -2000, x, 6000);
+    gfx.lineStyle(1, 0x182337, 0.45);
+    for (let x = -400; x <= world.width + 400; x += step) {
+      gfx.lineBetween(x, -400, x, world.height + 400);
     }
-    for (let y = -2000; y <= 6000; y += step) {
-      gfx.lineBetween(-2000, y, 6000, y);
+    for (let y = -400; y <= world.height + 400; y += step) {
+      gfx.lineBetween(-400, y, world.width + 400, y);
     }
+    const cx = world.width / 2;
+    const cy = world.height / 2;
+    gfx.lineStyle(2, 0x20344f, 0.7);
+    gfx.lineBetween(cx - world.width, cy, cx + world.width, cy);
+    gfx.lineBetween(cx, cy - world.height, cx, cy + world.height);
   }
 
   function drawCues() {
     if (!lastState.cues) return;
+    const time = Date.now();
     for (const cue of lastState.cues) {
       const color = cueColor(cue.type);
+      const pulse = 0.5 + 0.25 * Math.sin(time / 700 + cue.x * 0.01 + cue.y * 0.01);
+      const fillAlpha = 0.12 + 0.1 * pulse;
+      const strokeAlpha = 0.55 + 0.25 * pulse;
       switch (cue.shape) {
         case 'circle':
-          gfx.lineStyle(3, color, 0.9);
-          gfx.fillStyle(color, 0.18);
+          gfx.lineStyle(3, color, strokeAlpha);
+          gfx.fillStyle(color, fillAlpha);
           gfx.strokeCircle(cue.x, cue.y, cue.r);
           gfx.fillCircle(cue.x, cue.y, cue.r);
           break;
         case 'square':
-          gfx.lineStyle(3, color, 0.9);
-          gfx.fillStyle(color, 0.18);
+          gfx.lineStyle(3, color, strokeAlpha);
+          gfx.fillStyle(color, fillAlpha);
           gfx.strokeRect(cue.x - cue.r, cue.y - cue.r, cue.r * 2, cue.r * 2);
           gfx.fillRect(cue.x - cue.r, cue.y - cue.r, cue.r * 2, cue.r * 2);
           break;
         case 'diamond':
-          drawCuePolygon(cue, 4, Math.PI / 4, color);
+          drawCuePolygon(cue, 4, Math.PI / 4, color, strokeAlpha, fillAlpha);
           break;
         case 'hex':
-          drawCuePolygon(cue, 6, Math.PI / 6, color);
+          drawCuePolygon(cue, 6, Math.PI / 6, color, strokeAlpha, fillAlpha);
           break;
         default:
-          drawCuePolygon(cue, 5, 0, color);
+          drawCuePolygon(cue, 5, 0, color, strokeAlpha, fillAlpha);
           break;
       }
     }
   }
 
-  function drawCuePolygon(cue, sides, rotation, color) {
-    gfx.lineStyle(2, color, 0.6);
-    gfx.fillStyle(color, 0.08);
+  function drawCuePolygon(cue, sides, rotation, color, strokeAlpha, fillAlpha) {
+    gfx.lineStyle(2, color, strokeAlpha ?? 0.6);
+    gfx.fillStyle(color, fillAlpha ?? 0.08);
     gfx.beginPath();
     for (let i = 0; i <= sides; i++) {
       const angle = rotation + (i * Math.PI * 2) / sides;
@@ -380,6 +403,8 @@
     const now = Date.now();
     const invulnerable = player.invulnerableUntil && player.invulnerableUntil > now;
 
+    drawMotionTrail(player, color);
+    drawEffectAura(player, radius);
     drawCellBody(player, cell, radius, color, outline, alpha, invulnerable);
     drawLabel(scene, player, radius);
   }
@@ -462,6 +487,24 @@
     gfx.closePath();
     gfx.fillPath();
     gfx.strokePath();
+  }
+
+  function drawMotionTrail(player, color) {
+    const prev = previousPositions.get(player.id);
+    if (!prev) return;
+    gfx.lineStyle(2, color, 0.25);
+    gfx.lineBetween(prev.x, prev.y, player.x, player.y);
+  }
+
+  function drawEffectAura(player, radius) {
+    const now = Date.now();
+    const active = Array.isArray(player.effects) ? player.effects.find((e) => e.expiresAt > now) : null;
+    if (!active) return;
+    const color = effectColors.get(active.kind) ?? 0x63e6be;
+    const pulse = 0.5 + 0.25 * Math.sin(now / 320 + player.x * 0.003 + player.y * 0.002);
+    const r = radius * (1.25 + pulse * 0.18);
+    gfx.lineStyle(3, color, 0.5 + pulse * 0.25);
+    gfx.strokeCircle(player.x, player.y, r);
   }
 
   function getMovementAngle(player) {
@@ -559,7 +602,10 @@
       title.textContent = cell.label;
       const desc = document.createElement('small');
       desc.textContent = cell.description;
-      btn.append(shape, title, desc);
+      const mods = cell.modifiers || {};
+      const traits = document.createElement('small');
+      traits.textContent = `Speed ${formatMod(mods.speed)} • Mineral ${formatMod(mods.mineral)} • Capture ${formatMod(mods.capture)}`;
+      btn.append(shape, title, desc, traits);
       btn.addEventListener('click', () => {
         selectedCellType = cell.id;
         updateSelectedCellOption();
@@ -602,6 +648,11 @@
     return `#${(value >>> 0).toString(16).padStart(6, '0')}`;
   }
 
+  function formatMod(value) {
+    if (!Number.isFinite(value)) return 'x1.00';
+    return 'x' + Number(value).toFixed(2);
+  }
+
   function updateHud(me) {
     const board = lastState.scoreboard || {};
     const totals = board.totals || { players: 0, biomass: 0, minerals: 0, captures: 0 };
@@ -627,12 +678,12 @@
     const totalsCaptures = Number.isFinite(totals.captures) ? totals.captures : 0;
     const meCellLabel = meCell ? meCell.label : 'Spectator';
 
-    hudText.setText(
-      `Room ${lastState.roomId} | Players:${totalPlayers} Cues:${cuesCount} Pellets:${pelletsCount} | ` +
-      `Biomineral:${totalsMineral} Captures:${totalsCaptures} | Leader:${leaderText}` +
-      (cellSummaries ? ` | Cells:${cellSummaries}` : '') +
-      ` | You ${meCellLabel} m:${meMass} Ca:${meMinerals} state:${meState} capt:${meCaptures}`
-    );
+    const lines = [
+      `Room ${lastState.roomId} • Players ${totalPlayers} • Pellets ${pelletsCount} • Cues ${cuesCount}`,
+      `Culture Ca ${totalsMineral} • Captures ${totalsCaptures}` + (leader ? ` • Lead ${leaderText}` : ''),
+      `You ${meCellLabel} m:${meMass} Ca:${meMinerals} state:${meState} capt:${meCaptures}` + (cellSummaries ? ` • Cells ${cellSummaries}` : '')
+    ];
+    hudText.setText(lines);
 
     if (!me) {
       statusText.setVisible(false);
@@ -644,12 +695,14 @@
     if (now - (me.lastEatenAt || 0) < 2600) {
       const seconds = Math.max(0, invulnLeft / 1000).toFixed(1);
       statusText.setText(`You were resorbed! Invulnerable ${seconds}s`);
+      statusText.setColor('#ff6f91');
       statusText.setVisible(true);
       return;
     }
     if (invulnLeft > 0) {
       const seconds = (invulnLeft / 1000).toFixed(1);
       statusText.setText(`Invulnerable ${seconds}s`);
+      statusText.setColor('#7ea6ff');
       statusText.setVisible(true);
       return;
     }
@@ -660,7 +713,9 @@
     if (primaryEffect && primaryEffect.expiresAt > now) {
       const seconds = ((primaryEffect.expiresAt - now) / 1000).toFixed(1);
       const label = effectLabels.get(primaryEffect.kind) || primaryEffect.kind;
+      const color = colorToCss(effectColors.get(primaryEffect.kind) ?? 0x63e6be);
       statusText.setText(`${label} ${seconds}s`);
+      statusText.setColor(color);
       statusText.setVisible(true);
       return;
     }
@@ -668,6 +723,7 @@
       const pellet = pelletMap.get(me.lastPellet.type);
       if (pellet) {
         statusText.setText(`Last intake: ${pellet.label}`);
+        statusText.setColor('#e6eef7');
         statusText.setVisible(true);
         return;
       }
@@ -681,12 +737,19 @@
     const ms = Math.max(0, Math.floor(r.remainingMs || 0));
     const mm = String(Math.floor(ms / 60000)).padStart(2, '0');
     const ss = String(Math.floor((ms % 60000) / 1000)).padStart(2, '0');
-    let text = '';
-    if (r.phase === 'lobby') text = 'Lobby - waiting to start';
-    else if (r.phase === 'countdown') text = 'Round starting in ' + ss + 's';
-    else if (r.phase === 'playing') text = 'Time left ' + mm + ':' + ss;
-    else if (r.phase === 'ended') text = 'Round ended';
-    roundHud.textContent = text;
+    const leader = lastState.scoreboard?.leader;
+    const leaderLine = leader ? `${leader.label.split(' ')[0]} lead ${formatNumber(leader.minerals, 1)} Ca` : 'No leader yet';
+    let phaseLabel = 'Lobby';
+    let timeLabel = 'Waiting to start';
+    if (r.phase === 'countdown') { phaseLabel = 'Countdown'; timeLabel = `Starts in ${ss}s`; }
+    else if (r.phase === 'playing') { phaseLabel = 'Round Live'; timeLabel = `Time left ${mm}:${ss}`; }
+    else if (r.phase === 'ended') { phaseLabel = 'Round Ended'; timeLabel = 'Review + restart'; }
+
+    roundHud.innerHTML = `
+      <div class="hud-line"><span class="pill">${phaseLabel}</span><strong>${timeLabel}</strong></div>
+      <div class="hud-line muted">Objective: bank minerals, ride cues, and dodge resorption.</div>
+      <div class="hud-line muted">Leader: ${leaderLine}</div>
+    `;
     roundHud.style.display = 'block';
   }
 

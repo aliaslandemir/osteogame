@@ -9,28 +9,134 @@
     <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
     <style>
       body, html, #game { height: 100%; }
-      #overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(7,8,11,0.9); }
-      #overlay .card { width: min(92vw, 460px); }
+      #overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: linear-gradient(145deg, rgba(5,7,12,0.92), rgba(5,6,10,0.94)); backdrop-filter: blur(6px); }
+      #overlay .card { width: min(92vw, 520px); }
+      #roundHud { position:fixed; top:14px; left:50%; transform:translateX(-50%); z-index:10; color:#e6eef7; background:rgba(10,13,20,0.82); border:1px solid #1f2a3f; padding:8px 12px; border-radius:12px; display:none; box-shadow:0 14px 40px rgba(0,0,0,0.4); }
+      #roundHud .hud-line { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+      #roundHud .hud-line strong { letter-spacing:0.02em; }
+      #roundHud .muted { font-size:0.85rem; }
     </style>
   </head>
   <body>
     <div id="game"></div>
     <div id="overlay">
-      <div class="card col" style="gap:12px;">
-        <h3>Join OsteoGame</h3>
-        <div class="row"><input id="room" placeholder="Room code (e.g., ABC123)" maxlength="10" /></div>
-        <div class="row"><input id="name" placeholder="Display name" maxlength="16" /></div>
-        <div class="row"><input id="pin" placeholder="Room PIN (if required)" /></div>
+      <div class="card col" style="gap:14px;">
+        <div class="col" style="gap:6px;">
+          <div class="pill" aria-hidden="true">Join the culture</div>
+          <h3 style="margin:0;">OsteoGame</h3>
+          <p class="muted">Pick a lineage, follow the cues, and bank minerals while dodging hungry osteoclasts.</p>
+          <div class="row" style="gap:8px; flex-wrap:wrap;">
+            <span class="pill">Swipe to move</span>
+            <span class="pill">Collect vitamins</span>
+            <span class="pill warn">Avoid big cells</span>
+          </div>
+        </div>
+        <div class="row" style="flex-wrap:wrap;">
+          <input id="room" placeholder="Room code (e.g., ABC123)" maxlength="10" style="flex:1;" />
+          <input id="name" placeholder="Display name" maxlength="16" style="flex:1;" />
+        </div>
+        <div class="row"><input id="pin" placeholder="Room PIN (if required)" style="flex:1;" /></div>
         <div class="col" style="gap:8px;">
           <label class="muted">Choose your cell archetype</label>
-          <div id="cellOptions" class="col" style="gap:8px;"></div>
-          <div class="muted" style="font-size:12px;">Each cell starts with a distinct shape and biomineralization style. Scan the cues, absorb vitamins, and out-mineralize the culture.</div>
+          <div id="cellOptions" class="col" style="gap:10px;"></div>
+          <div class="muted" style="font-size:12px;">Each cell starts with a distinct shape and biomineralization style. Scan cues, absorb vitamins, and out-mineralize the culture.</div>
+          <ul class="hints">
+            <li>Move with WASD/arrow keys or drag the screen.</li>
+            <li>Pellets give temporary vitamin surges; cues level up your lineage.</li>
+            <li>Big mass lets you capture opponents—stay fast enough to escape.</li>
+          </ul>
         </div>
-        <button id="join">Join</button>
+        <button id="join" class="btn-accent">Enter Culture</button>
         <div id="error" class="muted"></div>
+        <div class="stack" style="margin-top:4px;">
+          <div class="card" style="gap:6px;">
+            <div class="glow" aria-hidden="true"></div>
+            <strong>Kid-friendly tips</strong>
+            <p class="muted">1) Match shapes to cues. 2) Vitamins give powers. 3) Light cells move faster, heavy ones win captures.</p>
+          </div>
+          <div class="card" style="gap:6px;">
+            <div class="glow" aria-hidden="true"></div>
+            <strong>Need a walkthrough?</strong>
+            <p class="muted">Tap the tour to highlight fields and hop into the round with confidence.</p>
+            <button id="startPlayTour" class="btn-ghost" type="button">Play Tour</button>
+          </div>
+        </div>
       </div>
     </div>
-    <div id="roundHud" style="position:fixed; top:8px; left:50%; transform:translateX(-50%); z-index:10; color:#e6eef7; font-family:monospace; background:rgba(13,15,20,0.6); border:1px solid #2a3145; padding:6px 10px; border-radius:8px; display:none"></div>
+    <div id="roundHud"></div>
+    <div id="playTour" class="tour-overlay">
+      <div class="tour-card">
+        <div class="tour-step">
+          <div class="badge" id="playTourBadge">1</div>
+          <div>
+            <h3 id="playTourTitle" style="margin:0 0 4px 0;">Join walkthrough</h3>
+            <p class="muted" id="playTourBody" style="margin:0;">Enter the room code from your teacher or host.</p>
+          </div>
+        </div>
+        <div class="tour-nav">
+          <div class="muted" id="playTourHint">Fields will glow when it is their turn.</div>
+          <div class="row" style="gap:8px;">
+            <button id="playTourPrev" class="btn-ghost" type="button">Back</button>
+            <button id="playTourNext" class="btn-accent" type="button">Next</button>
+            <button id="playTourClose" class="btn-danger" type="button">End tour</button>
+          </div>
+        </div>
+      </div>
+    </div>
     <script src="/client.js"></script>
+    <script>
+      (() => {
+        const steps = [
+          { title: 'Room code', body: 'Type the 6-letter code from the host screen.', target: 'room' },
+          { title: 'Name tag', body: 'Pick a short name so we can cheer for you.', target: 'name' },
+          { title: 'PIN check', body: 'If the host set a PIN, enter it here. Leave blank otherwise.', target: 'pin' },
+          { title: 'Choose a cell', body: 'Tap your favorite shape. Light cells are nimble; heavy ones capture.', target: 'cellOptions' },
+          { title: 'Join the culture', body: 'Press Enter Culture and glide toward vitamins.', target: 'join' },
+        ];
+        const qs = (id) => document.getElementById(id);
+        const overlay = qs('playTour');
+        const startBtn = qs('startPlayTour');
+        const badge = qs('playTourBadge');
+        const title = qs('playTourTitle');
+        const body = qs('playTourBody');
+        const hint = qs('playTourHint');
+        const prev = qs('playTourPrev');
+        const next = qs('playTourNext');
+        const close = qs('playTourClose');
+        let idx = 0;
+        let highlight = null;
+
+        function showStep(delta = 0) {
+          idx = Math.max(0, Math.min(steps.length - 1, idx + delta));
+          const step = steps[idx];
+          badge.textContent = `${idx + 1}/${steps.length}`;
+          title.textContent = step.title;
+          body.textContent = step.body;
+          if (highlight) highlight.classList.remove('highlight');
+          const target = step.target ? qs(step.target) : null;
+          if (target) {
+            highlight = target;
+            target.classList.add('highlight');
+            if (typeof target.scrollIntoView === 'function') target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          } else {
+            highlight = null;
+            hint.textContent = 'We will light up fields as they appear.';
+          }
+          overlay.style.display = 'flex';
+        }
+
+        function endTour() {
+          overlay.style.display = 'none';
+          if (highlight) highlight.classList.remove('highlight');
+          highlight = null;
+        }
+
+        startBtn?.addEventListener('click', () => { idx = 0; showStep(0); });
+        prev?.addEventListener('click', () => showStep(-1));
+        next?.addEventListener('click', () => showStep(1));
+        close?.addEventListener('click', endTour);
+        overlay?.addEventListener('click', (e) => { if (e.target === overlay) endTour(); });
+      })();
+    </script>
   </body>
   </html>
