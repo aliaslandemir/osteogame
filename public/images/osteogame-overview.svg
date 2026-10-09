@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="680" viewBox="0 0 1200 680" role="img" aria-labelledby="title desc">
+<title id="title">OsteoGame: coordinated bone repair</title>
+<desc id="desc">Mesenchymal progenitors differentiate into osteoblasts, which can become embedded osteocytes. Osteoclasts arise from a separate hematopoietic lineage. Damaged matrix is resorbed, osteoid is deposited and matured, and calcium plus phosphate mineralize it to restore a bone bridge.</desc>
+<defs><linearGradient id="bg" x2="1" y2="1"><stop stop-color="#133140"/><stop offset="1" stop-color="#091b26"/></linearGradient><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="#a9c6cf"/></marker></defs>
+<rect width="1200" height="680" rx="24" fill="url(#bg)"/>
+<g font-family="Segoe UI,Arial,sans-serif">
+<text x="44" y="54" fill="#7ce4cd" font-size="14" letter-spacing="3">OSTEOGAME / COOPERATIVE BONE REPAIR</text>
+<text x="44" y="108" fill="#edf8f5" font-size="40" font-weight="700">Living bone is a team effort.</text>
+<text x="44" y="143" fill="#aac2cd" font-size="18">Different cell jobs. One connected, mineralized tissue.</text>
+<rect x="36" y="172" width="760" height="200" rx="16" fill="#102936" stroke="#345563"/>
+<text x="58" y="201" fill="#aac2cd" font-size="13" letter-spacing="2">MESENCHYMAL / OSTEOBLAST LINEAGE</text>
+<rect x="102" y="244" width="72" height="34" rx="17" fill="#7ce4cd"/><ellipse cx="138" cy="261" rx="13" ry="8" fill="#3f9488"/>
+<rect x="365" y="235" width="54" height="54" rx="10" fill="#ffad87"/><circle cx="392" cy="262" r="10" fill="#a75c4b"/>
+<rect x="584" y="218" width="156" height="87" rx="14" fill="#eee2c5" fill-opacity=".65"/>
+<path d="M662 222V298M622 232l80 56M622 288l80-56M609 261h106" stroke="#b9a0f5" stroke-width="2"/>
+<path d="m662 239 7 15 17 2-12 11 3 16-15-8-15 8 3-16-12-11 17-2z" fill="#b9a0f5" stroke="#67548d"/>
+<g stroke="#a9c6cf" stroke-width="2" marker-end="url(#arrow)"><path d="M203 260H326"/><path d="M455 260H558"/></g>
+<g fill="#aac2cd" font-size="12"><text x="219" y="248">BMP/Wnt cues</text><text x="464" y="248">Embedding</text></g>
+<g fill="#edf8f5" font-size="18" font-weight="600" text-anchor="middle"><text x="138" y="323">Progenitor</text><text x="392" y="323">Osteoblast</text><text x="663" y="323">Osteocyte</text></g>
+<g fill="#aac2cd" font-size="13" text-anchor="middle"><text x="138" y="345">Commit to bone formation</text><text x="392" y="345">Deposit collagen-rich osteoid</text><text x="663" y="345">Embedded · sense loading</text></g>
+<rect x="820" y="172" width="344" height="200" rx="16" fill="#102936" stroke="#674854"/>
+<text x="842" y="201" fill="#ff9dac" font-size="13" letter-spacing="1">HEMATOPOIETIC LINEAGE</text>
+<ellipse cx="990" cy="261" rx="50" ry="30" fill="#ff7e91"/><g fill="#6f354c"><circle cx="966" cy="257" r="9"/><circle cx="990" cy="275" r="9"/><circle cx="1017" cy="250" r="9"/></g>
+<text x="990" y="323" text-anchor="middle" fill="#edf8f5" font-size="18" font-weight="600">Osteoclast</text>
+<text x="990" y="345" text-anchor="middle" fill="#aac2cd" font-size="13">Resorb damaged bone matrix</text>
+<text x="44" y="421" fill="#7ce4cd" font-size="14" letter-spacing="2">THE TISSUE REPAIR SEQUENCE</text>
+<g font-size="17" font-weight="600"><text x="62" y="467" fill="#ff9dac">01 Resorb damage</text><text x="345" y="467" fill="#ffad87">02 Deposit osteoid</text><text x="626" y="467" fill="#f7c66a">03 Mature + mineralize</text><text x="955" y="467" fill="#7ce4cd">04 Restore a bridge</text></g>
+<g stroke="#a9c6cf" stroke-width="2" marker-end="url(#arrow)"><path d="M265 517H310"/><path d="M550 517H597"/><path d="M872 517H923"/></g>
+<rect x="65" y="485" width="150" height="64" rx="8" fill="#eee2c5" fill-opacity=".6"/><path d="m131 490 17 14-24 17 25 23" stroke="#ff7e91" stroke-width="4" fill="none"/>
+<rect x="347" y="485" width="150" height="64" rx="8" fill="#a76c45"/><g stroke="#f2bb87" stroke-width="2"><path d="m357 500 130-4M357 514l130-4M357 528l130-4M357 542l130-4"/></g>
+<rect x="632" y="485" width="192" height="64" rx="8" fill="#eee2c5"/><g fill="#a76c45"><circle cx="653" cy="505" r="4"/><circle cx="711" cy="529" r="3"/><circle cx="795" cy="505" r="4"/></g>
+<g fill="#eee2c5" stroke="#345563"><rect x="950" y="485" width="56" height="64" rx="6"/><rect x="1009" y="485" width="56" height="64" rx="6"/><rect x="1068" y="485" width="56" height="64" rx="6"/></g>
+<g font-size="14" fill="#aac2cd"><text x="62" y="578">Prepare the remodeling site</text><text x="345" y="578">Ascorbate + metabolic supply</text><text x="626" y="578">Mature matrix + calcium + phosphate</text><text x="955" y="578">Connectivity matters</text></g>
+<path d="M44 610H1156" stroke="#345563"/>
+<text x="44" y="644" fill="#aac2cd" font-size="14">Osteocytes coordinate local formation and resorption in response to loading and damage.</text>
+<text x="1156" y="644" text-anchor="end" fill="#7ce4cd" font-size="12">QUALITATIVE MODEL</text>
+</g></svg>

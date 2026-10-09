@@ -1,615 +1,191 @@
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 const path = require('path');
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const { randomUUID } = require('crypto');
-
+const bone = require('./bone');
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
-
 const PORT = process.env.PORT || 3000;
 const DEFAULT_ROOM_PIN = process.env.ROOM_PIN || null;
-
-const WORLD = { width: 4200, height: 4200 };
-const BASE_MASS = 20;
-const MIN_MASS = 12;
-const MAX_MASS = 160;
-const MASS_DECAY_PER_SECOND = 2.5;
-const BASE_SPEED = 190;
-const MASS_SPEED_SLOW_FACTOR = 0.45;
-const OSTEOBLAST_SPEED_FACTOR = 0.8;
-const MASS_EAT_RATIO = 1.4;
-const INVULNERABLE_MS = 2500;
-const PELLET_TARGET = 180;
-
-const DEFAULT_CELL_TYPE = 'progenitor';
+const WORLD = { width: 2000, height: 1400 };
+const PELLET_TARGET = 80;
+const EMPTY_ROOM_TTL_MS = 60 * 60 * 1000;
+const MAX_ROOMS = 100;
+const rooms = new Map();
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const rand = (a, b) => a + Math.random() * (b - a);
 
 const CELL_ARCHETYPES = Object.freeze({
-  progenitor: {
-    id: 'progenitor',
-    label: 'Mesenchymal Capsule',
-    description: 'Balanced starter cell that adapts quickly to any cue.',
-    color: 0x7fd1b9,
-    shape: 'capsule',
-    modifiers: { speed: 1.0, decay: 1.0, mineral: 1.0, diff: 1.0, capture: 1.0, radius: 1.0, diagonal: 1.0 },
-  },
-  osteoblast: {
-    id: 'osteoblast',
-    label: 'Osteoblast Prism',
-    description: 'Matrix-secreting specialist that excels at biomineralization.',
-    color: 0xf4a261,
-    shape: 'square',
-    modifiers: { speed: 0.95, decay: 0.88, mineral: 1.45, diff: 1.3, capture: 1.05, radius: 1.08, diagonal: 1.0 },
-  },
-  osteocyte: {
-    id: 'osteocyte',
-    label: 'Osteocyte Dendrite',
-    description: 'Embedded sensor that thrives on mechanical signals and flow.',
-    color: 0x90be6d,
-    shape: 'star',
-    modifiers: { speed: 1.05, decay: 0.95, mineral: 1.2, diff: 1.1, capture: 1.1, radius: 0.95, diagonal: 1.25 },
-  },
-  osteoclast: {
-    id: 'osteoclast',
-    label: 'Osteoclast Apex',
-    description: 'Aggressive resorber that trades stability for bursts of power.',
-    color: 0xe63946,
-    shape: 'triangle',
-    modifiers: { speed: 1.2, decay: 1.32, mineral: 0.65, diff: 0.92, capture: 1.4, radius: 1.12, diagonal: 0.9 },
-  },
+  progenitor: { id: 'progenitor', label: 'Mesenchymal progenitor', shape: 'capsule', color: 0x7ce4cd,
+    description: 'Commit to the osteoblast lineage in a BMP/Wnt recruitment zone. Then build bone.',
+    job: 'Recruit → differentiate → deposit osteoid', lineage: 'Mesenchymal lineage',
+    modifiers: { speed: 1, radius: 1 } },
+  osteoblast: { id: 'osteoblast', label: 'Osteoblast', shape: 'square', color: 0xffad87,
+    description: 'Secrete collagen-rich osteoid and supply calcium + phosphate. Mature matrix mineralizes over time.',
+    job: 'Build matrix → support mineralization', lineage: 'Mesenchymal lineage',
+    modifiers: { speed: .8, radius: 1 } },
+  osteocyte: { id: 'osteocyte', label: 'Embedded osteocyte', shape: 'star', color: 0xb9a0f5,
+    description: 'Stay embedded in bone. Sense loading and signal local formation or damaged-site remodeling.',
+    job: 'Sense load → coordinate remodeling', lineage: 'Osteoblast-derived, embedded in bone',
+    modifiers: { speed: 0, radius: .85 } },
+  osteoclast: { id: 'osteoclast', label: 'Osteoclast', shape: 'multinucleated', color: 0xff7e91,
+    description: 'Resorb damaged bone matrix to prepare repair sites. Healthy tissue inhibits resorption.',
+    job: 'Clear damaged matrix → enable rebuilding', lineage: 'Hematopoietic / monocyte lineage',
+    modifiers: { speed: .7, radius: 1.35 } },
 });
-
-const CELL_ARCHETYPE_LIST = Object.freeze(
-  Object.values(CELL_ARCHETYPES).map((arc) => ({
-    id: arc.id,
-    label: arc.label,
-    description: arc.description,
-    color: arc.color,
-    shape: arc.shape,
-    modifiers: arc.modifiers,
-  }))
-);
-
-const EFFECTS = Object.freeze({
-  vitamin_c: { id: 'vitamin_c', speed: 1.35, diagonal: 1.2, durationMs: 5500 },
-  vitamin_d: { id: 'vitamin_d', mineral: 1.6, diff: 1.2, durationMs: 6200 },
-  vitamin_k: { id: 'vitamin_k', decay: 0.55, diagonal: 1.35, durationMs: 5200 },
-  steroid: { id: 'steroid', speed: 0.75, capture: 1.5, radius: 1.08, durationMs: 6800 },
-  flow_shear: { id: 'flow_shear', speed: 1.12, decay: 0.7, durationMs: 4200 },
-});
-
 const PELLET_TYPES = Object.freeze([
-  {
-    id: 'vitamin_c',
-    label: 'Vitamin C',
-    description: 'Collagen boost that sharpens motility and diagonal bursts.',
-    shape: 'triangle',
-    color: 0xffad69,
-    massGain: 1.6,
-    mineralPulse: 0,
-    effect: 'vitamin_c',
-  },
-  {
-    id: 'vitamin_d',
-    label: 'Vitamin D',
-    description: 'Calcification spark that amplifies biomineral deposition.',
-    shape: 'diamond',
-    color: 0xffd166,
-    massGain: 1.8,
-    mineralPulse: 2.4,
-    effect: 'vitamin_d',
-  },
-  {
-    id: 'vitamin_k',
-    label: 'Vitamin K',
-    description: 'Matrix modifier that steadies drift and rewards diagonals.',
-    shape: 'hex',
-    color: 0x80ed99,
-    massGain: 1.2,
-    mineralPulse: 0.6,
-    effect: 'vitamin_k',
-  },
-  {
-    id: 'steroid',
-    label: 'Steroid',
-    description: 'Power anabolic that bulks mass but dampens agility.',
-    shape: 'square',
-    color: 0xb388eb,
-    massGain: 3.4,
-    mineralPulse: 1.2,
-    effect: 'steroid',
-  },
+  { id: 'ascorbate', label: 'Ascorbate', shape: 'triangle', color: 0x7ce4cd,
+    description: 'Supports collagen-rich osteoid production.', resource: 'ascorbate' },
+  { id: 'calcium', label: 'Calcium', shape: 'circle', color: 0xf7c66a,
+    description: 'One of the two required mineral precursors.', resource: 'calcium' },
+  { id: 'phosphate', label: 'Phosphate', shape: 'diamond', color: 0x70c9ed,
+    description: 'Combines with calcium on mature matrix.', resource: 'phosphate' },
+  { id: 'glucose', label: 'Metabolic supply', shape: 'hex', color: 0xffad87,
+    description: 'Restores energy for tissue work.', resource: 'energy' },
 ]);
-
-const PELLET_TYPE_MAP = Object.freeze(
-  Object.fromEntries(PELLET_TYPES.map((pt) => [pt.id, pt]))
-);
-
-const CUE_TEMPLATES = Object.freeze([
-  { id: 'growth', shape: 'circle', count: 12, radius: [140, 240], props: { strength: [0.6, 1.4] } },
-  { id: 'nutrient', shape: 'hex', count: 12, radius: [120, 210], props: { rate: [1.4, 2.2] } },
-  { id: 'mineral', shape: 'square', count: 10, radius: [120, 190], props: { rate: [0.7, 1.3] } },
-  { id: 'mechanical', shape: 'diamond', count: 10, radius: [130, 220], props: { intensity: [0.6, 1.1] } },
-  { id: 'hormonal', shape: 'triangle', count: 8, radius: [140, 210], props: { potency: [0.8, 1.4] } },
-  { id: 'flow', shape: 'capsule', count: 8, radius: [160, 230], props: { shear: [0.5, 1.0] } },
-]);
-
-const CUE_TYPE_MAP = Object.freeze(
-  Object.fromEntries(CUE_TEMPLATES.map((cfg) => [cfg.id, cfg]))
-);
-
-app.use(express.json());
+const PELLET_TYPE_MAP = Object.fromEntries(PELLET_TYPES.map(p => [p.id, p]));
+const sanitizeCellType = raw => typeof raw === 'string' && Object.hasOwn(CELL_ARCHETYPES, raw) ? raw : 'progenitor';
+const manifestPayload = () => ({ cellArchetypes: Object.values(CELL_ARCHETYPES), pelletTypes: PELLET_TYPES });
+app.use(express.json({ limit: '8kb' }));
+app.get('/vendor/phaser.min.js', (_req, res) => res.sendFile(require.resolve('phaser/dist/phaser.min.js')));
 app.use(express.static(path.join(__dirname, 'public')));
 
-const rooms = new Map();
-
-function rand(a, b) { return a + Math.random() * (b - a); }
-function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
-function randomPoint() {
-  return {
-    x: rand(200, WORLD.width - 200),
-    y: rand(200, WORLD.height - 200),
-  };
+function generateCues() {
+  return [
+    { id: 'recruit-left', type: 'growth', label: 'BMP/Wnt recruitment', shape: 'circle', x: 820, y: 700, r: 190, strength: 1 },
+    { id: 'recruit-right', type: 'growth', label: 'BMP/Wnt recruitment', shape: 'circle', x: 1180, y: 700, r: 190, strength: 1 },
+    ...[640, 1360].flatMap(x => [330, 1070].map(y => ({ id: `vessel-${x}-${y}`, type: 'vascular',
+      label: 'Vessel: oxygen + supplies', shape: 'capsule', x, y, r: 220 }))),
+  ];
 }
-
-function randomFrom(array) {
-  return array[Math.floor(Math.random() * array.length)];
-}
-
-function sanitizeCellType(raw) {
-  if (raw && CELL_ARCHETYPES[raw]) return raw;
-  return DEFAULT_CELL_TYPE;
-}
-
-function manifestPayload() {
-  return {
-    cellArchetypes: CELL_ARCHETYPE_LIST,
-    pelletTypes: PELLET_TYPES.map((pt) => ({
-      id: pt.id,
-      label: pt.label,
-      description: pt.description,
-      shape: pt.shape,
-      color: pt.color,
-      effect: pt.effect ? { kind: pt.effect, durationMs: EFFECTS[pt.effect]?.durationMs || 0 } : null,
-      mineralPulse: pt.mineralPulse,
-      massGain: pt.massGain,
-    })),
-  };
-}
-
-function ensurePlayerState(player) {
-  if (!Array.isArray(player.effects)) player.effects = [];
-  if (!player.activeModifiers) player.activeModifiers = { ...CELL_ARCHETYPES[sanitizeCellType(player.cellType)].modifiers };
-  return player;
-}
-
-function applyEffect(player, kind, now, { durationFactor = 1 } = {}) {
-  const effect = EFFECTS[kind];
-  if (!effect) return null;
-  const duration = Math.max(0, Math.round((effect.durationMs || 0) * durationFactor));
-  if (duration <= 0) return null;
-  ensurePlayerState(player);
-  player.effects = player.effects.filter((e) => e.kind !== kind);
-  const expiresAt = now + duration;
-  player.effects.push({ kind, expiresAt });
-  return expiresAt;
-}
-
-function resolveModifiers(player, now = Date.now()) {
-  ensurePlayerState(player);
-  const archetype = CELL_ARCHETYPES[sanitizeCellType(player.cellType)];
-  const mods = { ...archetype.modifiers };
-  player.effects = player.effects.filter((effect) => effect.expiresAt > now);
-  for (const effect of player.effects) {
-    const cfg = EFFECTS[effect.kind];
-    if (!cfg) continue;
-    if (typeof cfg.speed === 'number') mods.speed *= cfg.speed;
-    if (typeof cfg.decay === 'number') mods.decay *= cfg.decay;
-    if (typeof cfg.mineral === 'number') mods.mineral *= cfg.mineral;
-    if (typeof cfg.diff === 'number') mods.diff *= cfg.diff;
-    if (typeof cfg.capture === 'number') mods.capture *= cfg.capture;
-    if (typeof cfg.radius === 'number') mods.radius *= cfg.radius;
-    if (typeof cfg.diagonal === 'number') mods.diagonal *= cfg.diagonal;
-  }
-  player.activeModifiers = mods;
-  return mods;
-}
-
-function calcRadius(player) {
-  const mods = player.activeModifiers || resolveModifiers(player);
-  const base = 12 + Math.sqrt(player.mass);
-  let radius = base * (mods.radius || 1);
-  if (player.morph === 'elongated') radius *= 1.25;
-  else if (player.morph === 'hypertrophic') radius *= 1.1;
-  return radius;
-}
-
-function calcSpeed(player, modsOverride) {
-  const massPenalty = 1 - Math.min(0.6, (player.mass - BASE_MASS) / (MAX_MASS * MASS_SPEED_SLOW_FACTOR));
-  const stateFactor = player.state === 'osteoblast' ? OSTEOBLAST_SPEED_FACTOR : 1;
-  const mods = modsOverride || player.activeModifiers || resolveModifiers(player);
-  let speed = BASE_SPEED * Math.max(0.35, massPenalty) * stateFactor * (mods.speed || 1);
-  if (mods.diagonal && Math.abs(player.input.dx) > 0 && Math.abs(player.input.dy) > 0) {
-    speed *= mods.diagonal;
-  }
-  return speed;
-}
-
 function createPellet(opts = {}) {
-  const { x, y, type: explicitType } = opts;
-  const typeId = sanitizePelletType(explicitType);
-  const type = PELLET_TYPE_MAP[typeId];
-  const spawnPoint = typeof x === 'number' && typeof y === 'number' ? { x, y } : randomPoint();
-  return {
-    id: randomUUID().slice(0, 8),
-    x: spawnPoint.x,
-    y: spawnPoint.y,
-    type: type.id,
-  };
+  const type = Object.hasOwn(PELLET_TYPE_MAP, opts.type || '') ? opts.type : PELLET_TYPES[Math.floor(Math.random() * PELLET_TYPES.length)].id;
+  return { id: randomUUID().slice(0, 8), type, x: opts.x ?? rand(420, 1580),
+    y: opts.y ?? (Math.random() < .5 ? rand(260, 450) : rand(950, 1140)) };
 }
-
-function sanitizePelletType(typeId) {
-  if (typeId && PELLET_TYPE_MAP[typeId]) return typeId;
-  return randomFrom(PELLET_TYPES).id;
-}
-
+const generatePellets = () => Array.from({ length: PELLET_TARGET }, () => createPellet());
 function createRoom({ pin = DEFAULT_ROOM_PIN } = {}) {
-  const id = randomUUID().slice(0, 6).toUpperCase();
+  let id;
+  do { id = randomUUID().slice(0, 6).toUpperCase(); } while (rooms.has(id));
   const now = Date.now();
-  const room = {
-    id,
-    pin: pin || null,
-    createdAt: now,
-    lastTick: now,
-    players: new Map(),
-    cues: generateCues(),
-    pellets: Array.from({ length: PELLET_TARGET }, () => createPellet()),
-    scoreboard: {},
-    maxPlayers: 48,
-    round: {
-      phase: 'lobby', // lobby | countdown | playing | ended
-      countdownMs: 5000,
-      durationMs: 180000,
-      remainingMs: 0,
-      startedAt: 0,
-      endedAt: 0,
-    },
-  };
+  const room = { id, pin: pin || null, createdAt: now, emptySince: now, lastTick: now,
+    players: new Map(), cues: generateCues(), pellets: generatePellets(), tissue: bone.createTissue(),
+    scoreboard: {}, tissueBroadcastAt: 0, maxPlayers: 48,
+    round: { phase: 'lobby', countdownMs: 5000, durationMs: 300000, remainingMs: 0, startedAt: 0, endedAt: 0, outcome: null } };
+  bone.tissueMetrics(room.tissue);
   rooms.set(id, room);
-  // Seed a pellet cluster near the center for immediate interaction
-  const cx = WORLD.width / 2, cy = WORLD.height / 2;
-  for (let i = 0; i < 80; i++) {
-    const px = cx + rand(-220, 220);
-    const py = cy + rand(-220, 220);
-    room.pellets.push(createPellet({ x: px, y: py }));
-  }
   return room;
 }
-
-function generateCues() {
-  const cues = [];
-  for (const cfg of CUE_TEMPLATES) {
-    for (let i = 0; i < cfg.count; i++) {
-      const { x, y } = randomPoint();
-      const cue = {
-        id: `${cfg.id}-${i}-${randomUUID().slice(0, 4)}`,
-        type: cfg.id,
-        shape: cfg.shape,
-        x,
-        y,
-        r: rand(cfg.radius[0], cfg.radius[1]),
-      };
-      if (cfg.props) {
-        for (const [key, range] of Object.entries(cfg.props)) {
-          cue[key] = rand(range[0], range[1]);
-        }
-      }
-      cues.push(cue);
-    }
-  }
-  // Ensure some cues are visible near the world center
-  const cx = WORLD.width / 2, cy = WORLD.height / 2;
-  cues.push({ id: 'center-growth', type: 'growth', shape: 'circle', x: cx - 200, y: cy, r: 180, strength: 1.2 });
-  cues.push({ id: 'center-nutrient', type: 'nutrient', shape: 'hex', x: cx + 220, y: cy, r: 160, rate: 1.9 });
-  cues.push({ id: 'center-mineral', type: 'mineral', shape: 'square', x: cx, y: cy - 240, r: 150, rate: 1.1 });
-  cues.push({ id: 'center-mech', type: 'mechanical', shape: 'diamond', x: cx, y: cy + 240, r: 170, intensity: 0.95 });
-  cues.push({ id: 'center-hormone', type: 'hormonal', shape: 'triangle', x: cx - 120, y: cy - 260, r: 150, potency: 1.2 });
-  cues.push({ id: 'center-flow', type: 'flow', shape: 'capsule', x: cx + 160, y: cy + 260, r: 190, shear: 0.9 });
-  return cues;
+function buildTissueSnapshot(room) {
+  const round = n => Math.round(n * 1000) / 1000;
+  return { roomId: room.id, grid: bone.GRID, patches: room.tissue.patches.map(p =>
+    [p.osteoid, p.matrix, p.mineral, p.damage, p.formationSignal, p.resorptionSignal].map(round)) };
 }
-
-function spawnPlayer(opts) {
-  const { x, y } = randomPoint();
-  const now = Date.now();
+function emitWorld(room, target = io.to(room.id)) {
+  target.emit('world_data', { roomId: room.id, world: WORLD, cues: room.cues });
+  target.emit('tissue_state', buildTissueSnapshot(room));
+}
+function spawnPlayer(opts, tissue = null) {
   const cellType = sanitizeCellType(opts.cellType);
-  const archetype = CELL_ARCHETYPES[cellType] || CELL_ARCHETYPES[DEFAULT_CELL_TYPE];
-  return {
-    id: opts.id,
-    name: opts.name,
-    cellType,
-    x,
-    y,
-    vx: 0,
-    vy: 0,
-    input: { dx: 0, dy: 0 },
-    state: 'progenitor',
-    diffProgress: 0,
-    mineralized: 0,
-    mass: BASE_MASS,
-    captures: 0,
-    elongation: 0,
-    morph: 'round',
-    invulnerableUntil: now + INVULNERABLE_MS,
-    lastEatenAt: 0,
-    effects: [],
-    activeModifiers: { ...archetype.modifiers },
-    lastPellet: null,
-  };
+  const site = cellType === 'osteocyte' && tissue ? bone.embeddedSite(tissue) : null;
+  return { id: opts.id, name: opts.name, cellType, initialCellType: cellType, state: cellType,
+    x: site?.x ?? rand(760, 880), y: site?.y ?? rand(650, 750), vx: 0, vy: 0,
+    input: { dx: 0, dy: 0, work: false }, diffProgress: cellType === 'progenitor' ? 0 : 1,
+    resources: { energy: 1, ascorbate: .8, calcium: .8, phosphate: .8 }, oxygen: 1,
+    deposited: 0, resorbed: 0, clearedDamage: 0, signaling: 0, patchId: site?.id ?? null,
+    activity: cellType === 'osteocyte' ? 'Embedded in mineralized matrix' : 'Ready to contribute to bone repair',
+    lastPellet: null, activeModifiers: { ...CELL_ARCHETYPES[cellType].modifiers } };
 }
-
-function respawnPlayer(player) {
-  const { x, y } = randomPoint();
-  const now = Date.now();
-  player.x = x;
-  player.y = y;
-  player.vx = 0;
-  player.vy = 0;
-  player.input.dx = 0;
-  player.input.dy = 0;
-  player.state = 'progenitor';
-  player.diffProgress = 0;
-  player.mineralized = 0;
-  player.mass = BASE_MASS;
-  player.elongation = 0;
-  player.morph = 'round';
-  player.invulnerableUntil = now + INVULNERABLE_MS;
-  player.lastEatenAt = now;
-  player.effects = [];
+function calcRadius(player) { return 19 * CELL_ARCHETYPES[sanitizeCellType(player.cellType)].modifiers.radius; }
+function resolveModifiers(player) {
   player.activeModifiers = { ...CELL_ARCHETYPES[sanitizeCellType(player.cellType)].modifiers };
-  player.lastPellet = null;
+  return player.activeModifiers;
 }
-
-function applyCues(player, room, dt, now) {
-  if (room.round.phase !== 'playing') return; // no cue effects outside play
-  const mods = player.activeModifiers || resolveModifiers(player, now);
-  for (const cue of room.cues) {
-    const dx = cue.x - player.x;
-    const dy = cue.y - player.y;
-    if ((dx * dx + dy * dy) > cue.r * cue.r) continue;
-    switch (cue.type) {
-      case 'growth':
-        player.diffProgress += (cue.strength || 1) * dt * (mods.diff || 1);
-        break;
-      case 'nutrient':
-        player.mass = Math.min(MAX_MASS, player.mass + (cue.rate || 1.5) * dt * (mods.mineral || 1));
-        break;
-      case 'mineral':
-        if (player.state === 'osteoblast') {
-          const gain = (cue.rate || 0.8) * dt * (mods.mineral || 1);
-          player.mineralized += gain;
-          player.mass = Math.min(MAX_MASS, player.mass + gain * 0.45);
-        }
-        break;
-      case 'mechanical':
-        player.elongation = Math.min(12, player.elongation + (cue.intensity || 0.6) * dt * (mods.diagonal || 1));
-        break;
-      case 'hormonal': {
-        const durationFactor = (cue.potency || 1);
-        applyEffect(player, 'vitamin_d', now, { durationFactor });
-        player.diffProgress += 0.4 * durationFactor * dt * (mods.diff || 1);
-        break;
-      }
-      case 'flow':
-        applyEffect(player, 'flow_shear', now, { durationFactor: cue.shear || 1 });
-        break;
-      default:
-        break;
-    }
-  }
-}
-
-function applyPellets(player, room, now) {
-  if (room.round.phase !== 'playing') return; // only absorb pellets during play
-  const radius = calcRadius(player);
-  const mods = player.activeModifiers || resolveModifiers(player, now);
+function applyPellets(player, room) {
+  if (player.state === 'osteocyte') return;
   for (let i = room.pellets.length - 1; i >= 0; i--) {
     const pellet = room.pellets[i];
-    const dx = pellet.x - player.x;
-    const dy = pellet.y - player.y;
-    if ((dx * dx + dy * dy) <= (radius + 12) * (radius + 12)) {
-      const type = PELLET_TYPE_MAP[pellet.type];
-      if (type) {
-        player.mass = Math.min(MAX_MASS, player.mass + type.massGain);
-        if (type.mineralPulse) {
-          player.mineralized += type.mineralPulse * (mods.mineral || 1);
-        }
-        let expiresAt = null;
-        if (type.effect) {
-          expiresAt = applyEffect(player, type.effect, now);
-          resolveModifiers(player, now);
-        }
-        player.lastPellet = { type: type.id, expiresAt };
-      }
-      room.pellets.splice(i, 1);
-    }
+    if (Math.hypot(player.x - pellet.x, player.y - pellet.y) > calcRadius(player) + 9) continue;
+    const type = PELLET_TYPE_MAP[pellet.type];
+    if (!type || player.resources[type.resource] >= .99) continue;
+    player.resources[type.resource] = Math.min(1, player.resources[type.resource] + .28);
+    player.lastPellet = { type: type.id };
+    room.pellets.splice(i, 1);
   }
-  while (room.pellets.length < PELLET_TARGET) {
-    room.pellets.push(createPellet());
-  }
-}
-
-function updateMorph(player) {
-  if (player.state === 'progenitor' && player.diffProgress >= 6) {
-    player.state = 'osteoblast';
-  }
-  if ((player.mass >= 40 && player.elongation >= 4) || player.mass >= 65) {
-    player.morph = 'elongated';
-  } else if (player.mass >= 28) {
-    player.morph = 'hypertrophic';
-  } else {
-    player.morph = 'round';
-  }
-}
-
-function performCapture(larger, smaller, now) {
-  const mods = larger.activeModifiers || resolveModifiers(larger, now);
-  const captureGain = smaller.mass * 0.7 * (mods.capture || 1);
-  larger.mass = Math.min(MAX_MASS, larger.mass + captureGain);
-  larger.captures += 1;
-  larger.mineralized += 0.35 * smaller.mass * (mods.mineral || 1);
-  respawnPlayer(smaller);
-}
-
-function handleCollisions(room, now) {
-  const players = [...room.players.values()];
-  for (let i = 0; i < players.length; i++) {
-    const a = players[i];
-    if (now < a.invulnerableUntil) continue;
-    const ra = calcRadius(a);
-    for (let j = i + 1; j < players.length; j++) {
-      const b = players[j];
-      if (now < b.invulnerableUntil) continue;
-      const rb = calcRadius(b);
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const dist = Math.hypot(dx, dy);
-      if (dist > Math.max(ra, rb)) continue;
-      if (a.mass >= b.mass * MASS_EAT_RATIO) {
-        performCapture(a, b, now);
-      } else if (b.mass >= a.mass * MASS_EAT_RATIO) {
-        performCapture(b, a, now);
-      }
-    }
-  }
-}
-
-function updateScoreboard(room) {
-  const board = {
-    totals: { players: 0, biomass: 0, minerals: 0, captures: 0 },
-  };
-  for (const p of room.players.values()) {
-    const cellType = sanitizeCellType(p.cellType);
-    if (!board[cellType]) {
-      const arc = CELL_ARCHETYPES[cellType];
-      board[cellType] = {
-        id: cellType,
-        label: arc.label,
-        players: 0,
-        biomass: 0,
-        minerals: 0,
-        captures: 0,
-      };
-    }
-    const entry = board[cellType];
-    entry.players += 1;
-    entry.biomass += p.mass;
-    entry.minerals += p.mineralized;
-    entry.captures += p.captures;
-
-    board.totals.players += 1;
-    board.totals.biomass += p.mass;
-    board.totals.minerals += p.mineralized;
-    board.totals.captures += p.captures;
-  }
-  const leaders = Object.entries(board)
-    .filter(([key]) => key !== 'totals')
-    .sort((a, b) => b[1].minerals - a[1].minerals);
-  board.leader = leaders.length
-    ? {
-        cellType: leaders[0][0],
-        label: leaders[0][1].label,
-        minerals: leaders[0][1].minerals,
-      }
-    : null;
-  room.scoreboard = board;
-}
-
-function stepRoom(room, dt) {
-  const now = Date.now();
-  // Safety: ensure content exists even if room was created under an older build
-  if (!room.cues || room.cues.length === 0) room.cues = generateCues();
-  if (!room.pellets) room.pellets = [];
   while (room.pellets.length < PELLET_TARGET) room.pellets.push(createPellet());
-
-  // Round state progression
+}
+function updateScoreboard(room) {
+  room.scoreboard = { totals: { players: room.players.size },
+    contributions: [...room.players.values()].map(p => ({ id: p.id, name: p.name,
+      deposited: p.deposited, resorbed: p.resorbed, clearedDamage: p.clearedDamage, signaling: p.signaling })) };
+}
+function startRound(room, opts = {}) {
+  const cd = Number.isFinite(opts.countdownMs) ? clamp(opts.countdownMs, 1000, 30000) : room.round.countdownMs;
+  const dur = Number.isFinite(opts.durationMs) ? clamp(opts.durationMs, 30000, 600000) : room.round.durationMs;
+  const loading = room.tissue.loading;
+  room.cues = generateCues(); room.pellets = generatePellets(); room.tissue = bone.createTissue();
+  room.tissue.loading = loading;
+  for (const [id, p] of room.players) room.players.set(id, spawnPlayer({ id, name: p.name, cellType: p.initialCellType }, room.tissue));
+  bone.tissueMetrics(room.tissue); updateScoreboard(room); emitWorld(room);
+  Object.assign(room.round, { phase: 'countdown', countdownMs: cd, durationMs: dur, remainingMs: cd,
+    startedAt: 0, endedAt: 0, outcome: null });
+}
+function stepRoom(room, dt, now = Date.now()) {
+  dt = Number.isFinite(dt) ? clamp(dt, 0, .25) : 0;
+  const phaseBefore = room.round.phase;
   if (room.round.phase === 'countdown') {
     room.round.remainingMs = Math.max(0, room.round.remainingMs - dt * 1000);
-    if (room.round.remainingMs <= 0) {
-      room.round.phase = 'playing';
-      room.round.remainingMs = room.round.durationMs;
-      room.round.startedAt = now;
-      // Normalize players
-      for (const p of room.players.values()) {
-        p.invulnerableUntil = now + 1500;
-      }
-    }
+    if (room.round.remainingMs === 0) Object.assign(room.round, { phase: 'playing', remainingMs: room.round.durationMs, startedAt: now });
   } else if (room.round.phase === 'playing') {
     room.round.remainingMs = Math.max(0, room.round.remainingMs - dt * 1000);
-    if (room.round.remainingMs <= 0) {
-      room.round.phase = 'ended';
-      room.round.endedAt = now;
+    if (room.round.remainingMs === 0) Object.assign(room.round, { phase: 'ended', endedAt: now, outcome: 'time_up' });
+  }
+  if (room.round.phase === 'playing') {
+    for (const p of room.players.values()) {
+      const mods = resolveModifiers(p);
+      const speed = p.input.work ? 0 : 150 * mods.speed;
+      p.vx = p.input.dx * speed; p.vy = p.input.dy * speed;
+      const radius = calcRadius(p);
+      p.x = clamp(p.x + p.vx * dt, radius, WORLD.width - radius);
+      p.y = clamp(p.y + p.vy * dt, radius, WORLD.height - radius);
+      applyPellets(p, room);
+      bone.actOnTissue(p, room, dt);
     }
+    const metrics = bone.stepTissue(room.tissue, dt, (room.round.durationMs - room.round.remainingMs) / 1000);
+    if (metrics.bridged) Object.assign(room.round, { phase: 'ended', endedAt: now, outcome: 'bridged' });
   }
-  for (const player of room.players.values()) {
-    const mods = resolveModifiers(player, now);
-    const speed = calcSpeed(player, mods);
-    const vx = player.input.dx * speed;
-    const vy = player.input.dy * speed;
-    player.vx = vx;
-    player.vy = vy;
-    player.x = clamp(player.x + vx * dt, 0, WORLD.width);
-    player.y = clamp(player.y + vy * dt, 0, WORLD.height);
-
-    const decay = MASS_DECAY_PER_SECOND * dt * (mods.decay || 1);
-    player.mass = clamp(player.mass - decay, MIN_MASS, MAX_MASS);
-
-    applyCues(player, room, dt, now);
-    applyPellets(player, room, now);
-    updateMorph(player);
-  }
-
-  handleCollisions(room, now);
   updateScoreboard(room);
-  const snapshot = buildSnapshot(room);
-  io.to(room.id).emit('state', snapshot);
+  if (now >= room.tissueBroadcastAt || phaseBefore !== room.round.phase) {
+    io.to(room.id).volatile.emit('tissue_state', buildTissueSnapshot(room));
+    room.tissueBroadcastAt = now + 200;
+  }
+  io.to(room.id).volatile.emit('state', buildSnapshot(room));
 }
-
 function buildSnapshot(room) {
-  return {
-    t: Date.now(),
-    roomId: room.id,
-    cues: room.cues,
-    pellets: room.pellets,
-    round: room.round,
-    players: [...room.players.values()].map((p) => ({
-      id: p.id,
-      name: p.name,
-      cellType: sanitizeCellType(p.cellType),
-      x: p.x,
-      y: p.y,
-      state: p.state,
-      morph: p.morph,
-      mass: p.mass,
-      diffProgress: p.diffProgress,
-      elongation: p.elongation,
-      mineralized: p.mineralized,
-      captures: p.captures,
-      invulnerableUntil: p.invulnerableUntil,
-      lastEatenAt: p.lastEatenAt,
-      activeModifiers: p.activeModifiers,
-      effects: p.effects?.map((e) => ({ kind: e.kind, expiresAt: e.expiresAt })) || [],
-      lastPellet: p.lastPellet || null,
-    })),
-    scoreboard: room.scoreboard,
-    world: WORLD,
-  };
+  return { t: Date.now(), roomId: room.id, world: WORLD, pellets: room.pellets, round: { ...room.round },
+    tissue: { loading: room.tissue.loading, load: room.tissue.load, metrics: { ...room.tissue.metrics } },
+    players: [...room.players.values()].map(p => ({ id: p.id, name: p.name, cellType: p.cellType, state: p.state,
+      x: p.x, y: p.y, diffProgress: p.diffProgress, resources: { ...p.resources }, oxygen: p.oxygen,
+      deposited: p.deposited, resorbed: p.resorbed, clearedDamage: p.clearedDamage, signaling: p.signaling,
+      patchId: p.patchId, activity: p.activity, lastPellet: p.lastPellet,
+      activeModifiers: p.activeModifiers, working: p.input.work })), scoreboard: room.scoreboard };
+}
+function takeRole(player, cellType, room) {
+  const type = sanitizeCellType(cellType);
+  const next = spawnPlayer({ id: player.id, name: player.name, cellType: type }, room.tissue);
+  for (const key of ['deposited', 'resorbed', 'clearedDamage', 'signaling', 'resources']) next[key] = player[key];
+  if (type !== 'osteocyte') { next.x = player.x; next.y = player.y; }
+  room.players.set(player.id, next);
 }
 
 // API: create room
 app.post('/api/create-room', (req, res) => {
   const pin = req.body && typeof req.body.pin === 'string' ? req.body.pin : DEFAULT_ROOM_PIN;
+  if (pin && pin.length > 32) return res.status(400).json({ error: 'PIN must be at most 32 characters' });
+  if (rooms.size >= MAX_ROOMS) return res.status(429).json({ error: 'Room limit reached. Try again later.' });
   const room = createRoom({ pin });
   res.json({ roomId: room.id, pin: room.pin || null });
 });
@@ -629,6 +205,7 @@ app.get('/api/rooms/:id/summary', (req, res) => {
     pellets: room.pellets?.length || 0,
     players: room.players.size,
     round: room.round,
+    tissue: { loading: room.tissue.loading, metrics: room.tissue.metrics },
   });
 });
 
@@ -636,30 +213,16 @@ app.post('/api/rooms/:id/regenerate', (req, res) => {
   const id = String(req.params.id || '').toUpperCase();
   const room = rooms.get(id);
   if (!room) return res.status(404).json({ error: 'Room not found' });
-  room.cues = generateCues();
-  room.pellets = Array.from({ length: PELLET_TARGET }, () => createPellet());
-  const cx = WORLD.width / 2, cy = WORLD.height / 2;
-  for (let i = 0; i < 80; i++) {
-    const px = cx + rand(-220, 220);
-    const py = cy + rand(-220, 220);
-    room.pellets.push(createPellet({ x: px, y: py }));
+  if (['countdown', 'playing'].includes(room.round.phase)) {
+    return res.status(409).json({ error: 'Regenerate between rounds' });
   }
+  room.cues = generateCues();
+  room.pellets = generatePellets();
+  emitWorld(room);
   res.json({ ok: true, cues: room.cues.length, pellets: room.pellets.length });
 });
 
-// API: start round
-function startRound(room, opts = {}) {
-  const cd = typeof opts.countdownMs === 'number' ? Math.max(1000, Math.min(30000, opts.countdownMs)) : room.round.countdownMs;
-  const dur = typeof opts.durationMs === 'number' ? Math.max(30000, Math.min(600000, opts.durationMs)) : room.round.durationMs;
-  room.round.phase = 'countdown';
-  room.round.countdownMs = cd;
-  room.round.durationMs = dur;
-  room.round.remainingMs = cd;
-  room.round.startedAt = 0;
-  room.round.endedAt = 0;
-}
-
-app.all('/api/start-round', (req, res) => {
+app.post('/api/start-round', (req, res) => {
   const body = req.body || {};
   const q = req.query || {};
   const roomId = body.roomId || q.roomId || q.room;
@@ -667,12 +230,23 @@ app.all('/api/start-round', (req, res) => {
   const durationMs = Number(body.durationMs || q.durationMs);
   const room = rooms.get(String(roomId || '').toUpperCase());
   if (!room) return res.status(404).json({ error: 'Room not found' });
+  if (['countdown', 'playing'].includes(room.round.phase)) return res.status(409).json({ error: 'Round already in progress' });
   try {
     startRound(room, { countdownMs: isNaN(countdownMs) ? undefined : countdownMs, durationMs: isNaN(durationMs) ? undefined : durationMs });
     return res.json({ ok: true, round: room.round });
   } catch (e) {
     return res.status(500).json({ error: 'Failed to start round' });
   }
+});
+
+app.post('/api/rooms/:id/loading', (req, res) => {
+  const room = rooms.get(String(req.params.id).toUpperCase());
+  if (!room) return res.status(404).json({ error: 'Room not found' });
+  const loading = req.body?.loading;
+  if (!Object.hasOwn(bone.LOADS, loading || '')) return res.status(400).json({ error: 'Choose resting, physiological, or overload' });
+  room.tissue.loading = loading;
+  room.tissue.load = bone.LOADS[loading];
+  res.json({ ok: true, loading });
 });
 
 // Serve host and play pages explicitly (also served by static middleware)
@@ -685,7 +259,10 @@ io.on('connection', (socket) => {
 
   socket.emit('manifest', manifestPayload());
 
-  socket.on('join', ({ roomId, name, pin, cellType }) => {
+  socket.on('join', (payload) => {
+    if (!payload || typeof payload !== 'object') return socket.emit('join_error', { message: 'Invalid join request' });
+    const { name, pin, cellType } = payload;
+    const roomId = typeof payload.roomId === 'string' ? payload.roomId.trim().toUpperCase() : '';
     const room = rooms.get(roomId);
     if (!room) {
       socket.emit('join_error', { message: 'Room not found' });
@@ -695,38 +272,69 @@ io.on('connection', (socket) => {
       socket.emit('join_error', { message: 'Invalid PIN' });
       return;
     }
-    if (room.players.size >= room.maxPlayers) {
+    if (!room.players.has(socket.id) && room.players.size >= room.maxPlayers) {
       socket.emit('join_error', { message: 'Room full' });
       return;
     }
 
+    if (joinedRoomId === roomId && room.players.has(socket.id)) {
+      socket.emit('join_ok', { roomId, playerId, cellType: room.players.get(playerId).cellType });
+      emitWorld(room, socket);
+      socket.emit('state', buildSnapshot(room));
+      return;
+    }
+    if (joinedRoomId) {
+      const previousRoom = rooms.get(joinedRoomId);
+      previousRoom?.players.delete(playerId);
+      if (previousRoom && !previousRoom.players.size) previousRoom.emptySince = Date.now();
+      socket.leave(joinedRoomId);
+    }
     joinedRoomId = roomId;
     playerId = socket.id;
     const selectedCell = sanitizeCellType(cellType);
     const player = spawnPlayer({
       id: playerId,
-      name: name?.slice(0, 16) || 'Player',
+      name: typeof name === 'string' ? name.trim().slice(0, 16) || 'Player' : 'Player',
       cellType: selectedCell,
-    });
+    }, room.tissue);
     room.players.set(playerId, player);
+    room.emptySince = null;
     socket.join(roomId);
+    emitWorld(room, socket);
     socket.emit('join_ok', { roomId, playerId, cellType: selectedCell });
 
-    // Auto-start a round if we are still in lobby or have ended
-    if (room.round.phase === 'lobby' || room.round.phase === 'ended') {
-      startRound(room, { countdownMs: 2000 });
-    }
+    updateScoreboard(room);
+    socket.emit('state', buildSnapshot(room));
   });
 
-  socket.on('input', ({ dx, dy }) => {
+  socket.on('input', (payload) => {
+    if (!payload || typeof payload !== 'object') return;
+    const { dx, dy, work } = payload;
+    if (!Number.isFinite(dx) || !Number.isFinite(dy)) return;
     if (!joinedRoomId) return;
     const room = rooms.get(joinedRoomId);
     if (!room) return;
     const p = room.players.get(playerId);
     if (!p) return;
-    const mag = Math.hypot(dx || 0, dy || 0) || 1;
+    const mag = Math.max(1, Math.hypot(dx, dy));
     p.input.dx = clamp((dx || 0) / mag, -1, 1);
     p.input.dy = clamp((dy || 0) / mag, -1, 1);
+    p.input.work = work === true;
+  });
+
+  socket.on('take_role', (payload) => {
+    const room = rooms.get(joinedRoomId);
+    const p = room?.players.get(playerId);
+    if (!p || room.round.phase !== 'playing' || typeof payload?.cellType !== 'string' || !Object.hasOwn(CELL_ARCHETYPES, payload.cellType)) return;
+    takeRole(p, payload.cellType, room);
+    socket.emit('state', buildSnapshot(room));
+  });
+  socket.on('observe_or_embed', () => {
+    const room = rooms.get(joinedRoomId);
+    const p = room?.players.get(playerId);
+    if (!p || room.round.phase !== 'playing') return;
+    bone.switchSite(p, room.tissue);
+    socket.emit('state', buildSnapshot(room));
   });
 
   socket.on('disconnect', () => {
@@ -734,24 +342,37 @@ io.on('connection', (socket) => {
     const room = rooms.get(joinedRoomId);
     if (room) {
       room.players.delete(playerId);
+      if (!room.players.size) room.emptySince = Date.now();
     }
   });
 });
 
-// Room tick loops
-setInterval(() => {
-  const now = Date.now();
-  for (const room of rooms.values()) {
-    const dt = Math.min(0.05, (now - room.lastTick) / 1000);
-    room.lastTick = now;
-    stepRoom(room, dt);
-  }
-}, 50);
+// Importing the simulation does not open ports or start timers (used by tests).
+let tickTimer;
+function startServer(port = PORT) {
+  const defaultRoom = createRoom({ pin: DEFAULT_ROOM_PIN });
+  console.log('Created default room', defaultRoom.id);
+  tickTimer = setInterval(() => {
+    const now = Date.now();
+    for (const room of rooms.values()) {
+      const dt = Math.min(0.25, (now - room.lastTick) / 1000);
+      room.lastTick = now;
+      if (!room.players.size) {
+        if (now - room.emptySince > EMPTY_ROOM_TTL_MS) rooms.delete(room.id);
+        continue;
+      }
+      stepRoom(room, dt, now);
+    }
+  }, 50);
+  return server.listen(port, () => console.log(`OsteoGame listening on http://localhost:${server.address().port}`));
+}
 
-// Create a default room on startup for convenience
-const defaultRoom = createRoom({ pin: DEFAULT_ROOM_PIN });
-console.log('Created default room', defaultRoom.id);
+function stopServer() {
+  clearInterval(tickTimer);
+  return new Promise((resolve) => io.close(resolve));
+}
 
-server.listen(PORT, () => {
-  console.log(`OsteoGame server listening on http://localhost:${PORT}`);
-});
+if (require.main === module) startServer();
+module.exports = { app, server, rooms, startServer, stopServer, createRoom, spawnPlayer,
+  startRound, stepRoom, buildSnapshot, sanitizeCellType, resolveModifiers, calcRadius,
+  applyPellets, takeRole, buildTissueSnapshot };

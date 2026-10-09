@@ -5,16 +5,29 @@
   "scripts": {
     "start": "node server.js",
     "start:local": "./tools/node-v20.16.0-win-x64/node.exe server.js",
-    "test": "echo \"No tests yet\""
+    "test": "node --test",
+    "check": "node --check bone.js && node --check server.js && node --check public/client.js && node --check public/host.js"
   },
-  "keywords": [],
+  "keywords": [
+    "multiplayer",
+    "osteogenesis",
+    "phaser",
+    "socket.io",
+    "educational-game"
+  ],
   "author": "",
   "license": "ISC",
   "description": "Multiplayer osteogenesis game (express + socket.io)",
   "dependencies": {
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
-    "socket.io": "^4.8.1",
-    "uuid": "^13.0.0"
+    "phaser": "^3.80.1",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "socket.io-client": "^4.8.4"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

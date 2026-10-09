@@ -1,48 +1,42 @@
 <!doctype html>
-<html>
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>OsteoGame</title>
+    <meta name="theme-color" content="#091b26" />
+    <meta name="description" content="Cooperative bone repair: build collagen-rich matrix, mineralize it, and coordinate tissue remodeling." />
+    <title>OsteoGame · Repair living bone</title>
+    <link rel="icon" href="/images/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
-    <div class="wrap">
-      <h1>OsteoGame</h1>
-      <p class="muted">Collaborative cell differentiation experiment focused on scaffold colonization and matrix mineralization.</p>
-      <div class="card col" style="gap:16px; margin-top: 16px;">
-        <div class="row">
-          <a href="/host"><button>Create/Host Room (QR)</button></a>
-          <a href="/play"><button>Join Room</button></a>
+    <main class="wrap landing">
+      <nav class="row between" aria-label="Main navigation"><a class="brand" href="/">◈ OsteoGame</a><a class="nav-link" href="/host">Host bone repair ↗</a></nav>
+      <section class="landing-hero">
+        <div class="col" style="gap:22px">
+          <span class="eyebrow">COOPERATIVE • BONE REMODELING</span>
+          <h1>Repair bone.<br /><span>Work as a tissue.</span></h1>
+          <p class="intro">A shared bone-repair challenge. Clear damaged matrix, lay collagen-rich osteoid, and supply the minerals that restore a continuous bone bridge.</p>
+          <div class="row actions"><a class="button btn-accent" href="/play">Join bone repair <span aria-hidden="true">→</span></a><a class="button btn-ghost" href="/host">Host a room</a></div>
+          <p class="muted">5-minute repair rounds · Up to 48 players · Keyboard & touch</p>
         </div>
-        <div class="notice">
-          Coordinate with your lab team: share the QR code or room code with collaborators on the same network to seed the experiment together.
+        <figure class="arena-figure"><img src="/images/osteogame-overview.svg" alt="Diagram of osteogenic differentiation and the coordinated bone remodeling cycle." width="1200" height="680" /><figcaption>Recruit. Resorb. Form. Mineralize. Maintain.</figcaption></figure>
+      </section>
+      <section class="steps" aria-label="How to play">
+        <article class="card"><span class="step-number">01 / REMODEL</span><h2>Prepare the repair site.</h2><p class="muted">Osteoclasts remove damaged bone matrix. Embedded osteocytes sense loading and signal where remodeling is needed.</p></article>
+        <article class="card"><span class="step-number">02 / FORM</span><h2>Lay the organic matrix.</h2><p class="muted">Mesenchymal progenitors respond to osteogenic recruitment signals. Osteoblasts use ascorbate and energy to secrete collagen-rich osteoid.</p></article>
+        <article class="card"><span class="step-number">03 / MINERALIZE</span><h2>Restore the bone bridge.</h2><p class="muted">Osteoid matures before calcium and phosphate can mineralize it. Success depends on connected, intact tissue rather than individual mineral scores.</p></article>
+      </section>
+      <section class="card lineage-section">
+        <div class="row between"><h2>Coordinate the cell jobs.</h2><span class="muted">One shared objective</span></div>
+        <div class="lineage-grid">
+          <article><span class="lineage-icon mint">▰</span><h3>Mesenchymal</h3><p class="muted">Respond to BMP/Wnt; become an osteoblast.</p></article>
+          <article><span class="lineage-icon coral">■</span><h3>Osteoblast</h3><p class="muted">Build osteoid; support mineralization.</p></article>
+          <article><span class="lineage-icon lavender">★</span><h3>Osteocyte</h3><p class="muted">Remain embedded; sense and signal.</p></article>
+          <article><span class="lineage-icon rose">●</span><h3>Osteoclast</h3><p class="muted">Resorb damaged matrix; enable repair.</p></article>
         </div>
-      </div>
-      <div class="card col" style="gap:12px; margin-top: 24px;">
-        <h2>Cell Archetypes</h2>
-        <p class="muted">Join by selecting a lineage that matches your biomineralization plan. Each archetype spawns with a unique silhouette and trait mix:</p>
-        <ul class="muted" style="margin-left:20px; display:grid; gap:6px;">
-          <li><b>Mesenchymal Capsule</b> - versatile starter that pivots quickly between cues.</li>
-          <li><b>Osteoblast Prism</b> - mineral factory that converts nutrients into hydroxyapatite.</li>
-          <li><b>Osteocyte Dendrite</b> - mechanosensitive networker with diagonal control bonuses.</li>
-          <li><b>Osteoclast Apex</b> - high-motility resorber that trades stability for capture power.</li>
-        </ul>
-        <p class="muted">Vitamin pellets (C, D, K, steroid) reshape motility and mineral gain in real time, while local cues (growth, nutrient, mineral, mechanical, hormonal, flow) steer differentiation.</p>
-      </div>
-      <div class="card col" style="gap:12px; margin-top: 16px;">
-        <h2>Experimental Objectives</h2>
-        <p class="muted">Each round represents a perfusion cycle. Collaborators chase the highest biomineral load by combining lineage traits with timely vitamin pickups and cue positioning.</p>
-        <p class="muted">The HUD highlights culture-wide mineralization, the leading archetype, and active vitamin effects so lab partners can synchronize supply chains and keep the scaffold maturing.</p>
-      </div>
-      <div class="card col" style="gap:12px; margin-top: 16px;">
-        <h2>Biomineralization Model Inputs</h2>
-        <p class="muted">Bench conditions feed the simulation loop, anchoring each day of the MC3T3-E1 differentiation timeline with measured cues.</p>
-        <p class="muted"><strong>Base supplements</strong> push extracellular matrix assembly: <b>Ascorbic Acid (Asc)</b> drives collagen I synthesis and secretion to scaffold mineral growth, while <b>β-Glycerophosphate (β-Gly)</b> supplies phosphate donors that alkaline phosphatase converts into inorganic phosphate for hydroxyapatite precursors.</p>
-        <p class="muted"><strong>Boosting supplements</strong> fine-tune osteogenic commitment: <b>Dexamethasone (Dex)</b> accelerates differentiation when dosed carefully to avoid stress, and <b>Vitamin&nbsp;K<sub>2</sub> (MK-4)</b> enhances mineral quality by promoting osteogenic gene expression and matrix organization.</p>
-        <p class="muted"><strong>Readouts calibrate the automata</strong>: <b>ALP activity</b> marks early commitment and phosphate liberation, <b>collagen I immunofluorescence</b> resolves ECM architecture at single-cell resolution, and <b>Alizarin Red S staining</b> quantifies late-stage calcium deposition. Together they provide thresholds and rate modifiers for the agent-based ruleset.</p>
-        <p class="muted">These inputs translate laboratory data into in-game parameters, letting players explore how supplements, enzyme kinetics, and matrix maturation couple to scaffold mineralization outcomes.</p>
-      </div>
-    </div>
+      </section>
+      <footer class="row between"><span>OsteoGame · Resorb. Form. Repair.</span><span>Qualitative model · Accelerated time · No clinical predictions</span></footer>
+    </main>
   </body>
-  </html>
+</html>

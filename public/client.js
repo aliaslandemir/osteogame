@@ -1,6 +1,19 @@
 (() => {
   const params = new URLSearchParams(location.search);
-  let roomId = params.get('room');
+  let roomId = params.get('room')?.trim().toUpperCase();
+  let worldData = null;
+  let tissueData = null;
+  let workHeld = false;
+  let spaceKey;
+  let embedKey;
+  const workButton = document.getElementById('workButton');
+  const embedButton = document.getElementById('embedButton');
+  const roleSwitch = document.getElementById('roleSwitch');
+  const controls = document.getElementById('cellControls');
+  const sitePanel = document.getElementById('sitePanel');
+  let serverOffset = 0;
+  let lastRoundMarkup = '';
+  const serverNow = () => Date.now() + serverOffset;
   const overlay = document.getElementById('overlay');
   const errorEl = document.getElementById('error');
   const roomInput = document.getElementById('room');
@@ -12,8 +25,6 @@
   const cellMap = new Map();
   let pelletTypes = [];
   const pelletMap = new Map();
-  const effectLabels = new Map();
-  const effectColors = new Map();
   let selectedCellType = null;
 
   const socket = io();
@@ -22,14 +33,15 @@
 
   const pointerVector = { dx: 0, dy: 0, active: false };
   const keyboardVector = { dx: 0, dy: 0 };
-  const inputVector = { dx: 0, dy: 0 };
+  const inputVector = { dx: 0, dy: 0, work: false };
   const previousPositions = new Map();
   const labelPool = new Map();
+  const worldLabelPool = new Map();
 
   if (roomId) {
     if (roomInput) {
       roomInput.value = roomId;
-      roomInput.style.display = 'none';
+      roomInput.setAttribute('aria-label', 'Room code');
     }
   } else if (roomInput) {
     roomInput.focus();
@@ -38,7 +50,7 @@
   document.getElementById('join').addEventListener('click', () => {
     errorEl.textContent = '';
     const enteredRoom = (roomInput?.value || '').trim().toUpperCase();
-    const useRoom = roomId || enteredRoom;
+    const useRoom = enteredRoom || roomId;
     if (!useRoom) {
       errorEl.textContent = 'Enter the room code (from host) to join.';
       return;
@@ -74,19 +86,7 @@
     if (Array.isArray(payload.pelletTypes)) {
       pelletTypes = payload.pelletTypes.map((pt) => ({ ...pt }));
       pelletMap.clear();
-      effectLabels.clear();
-      effectColors.clear();
-      for (const pt of pelletTypes) {
-        pelletMap.set(pt.id, pt);
-        if (pt.effect?.kind) {
-          effectLabels.set(pt.effect.kind, `${pt.label} surge`);
-          effectColors.set(pt.effect.kind, pt.color);
-        }
-      }
-      if (!effectLabels.has('flow_shear')) {
-        effectLabels.set('flow_shear', 'Fluid shear');
-        effectColors.set('flow_shear', 0x63e6be);
-      }
+      for (const pt of pelletTypes) pelletMap.set(pt.id, pt);
     }
     renderCellOptions();
   });
@@ -98,20 +98,73 @@
       updateSelectedCellOption();
     }
     overlay.style.display = 'none';
+    controls.hidden = false;
   });
 
   socket.on('join_error', (err) => {
     errorEl.textContent = err?.message || 'Failed to join';
   });
 
-  socket.on('state', (snap) => {
-    lastState = snap;
+  socket.on('tissue_state', (data) => {
+    const { grid } = data;
+    tissueData = { ...data, patches: data.patches.map((values, id) => ({
+      id, x: grid.x + (id % grid.cols + .5) * grid.size,
+      y: grid.y + (Math.floor(id / grid.cols) + .5) * grid.size,
+      osteoid: values[0], matrix: values[1], mineral: values[2], damage: values[3],
+      formationSignal: values[4], resorptionSignal: values[5],
+    })) };
   });
+
+  socket.on('world_data', (data) => {
+    worldData = data;
+    if (lastState && lastState.roomId === data.roomId) lastState = { ...lastState, ...data };
+  });
+
+  socket.on('state', (snap) => {
+    serverOffset = snap.t - Date.now();
+    lastState = { ...snap, cues: worldData?.roomId === snap.roomId ? worldData.cues : [] };
+  });
+
+  socket.on('disconnect', () => {
+    playerId = null;
+    lastState = null;
+    worldData = null;
+    tissueData = null;
+    controls.hidden = true;
+    sitePanel.hidden = true;
+    resetInput();
+    overlay.style.display = 'flex';
+    errorEl.textContent = 'Connection lost. Rejoin when connected; your previous score was cleared.';
+  });
+  socket.on('connect_error', () => { errorEl.textContent = 'Cannot reach the server. Check your connection.'; });
+  socket.on('connect', () => { errorEl.textContent = ''; });
+
+  function resetInput() {
+    pointerVector.active = false;
+    workHeld = false;
+    spaceKey?.reset();
+    inputVector.work = false;
+    workButton.classList.remove('working');
+    for (const vector of [pointerVector, keyboardVector, inputVector]) { vector.dx = 0; vector.dy = 0; }
+    if (playerId && socket.connected) socket.emit('input', { dx: 0, dy: 0, work: false });
+  }
+  workButton.addEventListener('pointerdown', (event) => {
+    if (workButton.disabled) return;
+    event.preventDefault(); workButton.setPointerCapture(event.pointerId);
+    workHeld = true;
+  });
+  for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+    workButton.addEventListener(event, () => { workHeld = false; });
+  }
+  embedButton.addEventListener('click', () => socket.emit('observe_or_embed'));
+  roleSwitch.addEventListener('change', () => { resetInput(); socket.emit('take_role', { cellType: roleSwitch.value }); });
+  window.addEventListener('blur', resetInput);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) resetInput(); });
 
   const config = {
     type: Phaser.AUTO,
     parent: 'game',
-    backgroundColor: '#0b0d12',
+    backgroundColor: '#091b26',
     width: window.innerWidth,
     height: window.innerHeight,
     scene: { preload, create, update },
@@ -119,7 +172,7 @@
   const game = new Phaser.Game(config);
 
   window.addEventListener('resize', () => {
-    game.scale.resize(window.innerWidth, window.innerHeight);
+    if (game.isBooted && game.renderer) game.scale.resize(window.innerWidth, window.innerHeight);
   });
 
   let cam;
@@ -137,22 +190,27 @@
     cam = this.cameras.main;
     cam.setRoundPixels(true);
 
-    hudText = this.add.text(8, 8, '', {
+    hudText = this.add.text(16, 16, '', {
       fontFamily: 'Space Grotesk, Fira Code, monospace',
-      fontSize: 14,
+      fontSize: window.innerWidth < 700 ? 11 : 13,
+      backgroundColor: '#102c3b',
+      padding: { x: 10, y: 8 },
       color: '#e6eef7',
     }).setScrollFactor(0).setDepth(2000);
     hudText.setLineSpacing(4);
 
-    statusText = this.add.text(8, 52, '', {
+    statusText = this.add.text(16, 94, '', {
       fontFamily: 'Space Grotesk, Fira Code, monospace',
-      fontSize: 13,
+      fontSize: 12,
       color: '#d6adff',
     }).setScrollFactor(0).setDepth(2000);
     statusText.setVisible(false);
 
     cursors = this.input.keyboard.createCursorKeys();
     wasd = this.input.keyboard.addKeys({ W: 'W', A: 'A', S: 'S', D: 'D' });
+    spaceKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE, false);
+    embedKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E, false);
+    embedKey.on('down', () => { if (playerId) socket.emit('observe_or_embed'); });
 
     const updateKeyboardVector = () => {
       const dx = (cursors.right.isDown || wasd.D.isDown ? 1 : 0) - (cursors.left.isDown || wasd.A.isDown ? 1 : 0);
@@ -179,6 +237,7 @@
       pointerVector.active = true;
       setPointerVector(p, this.scale.width, this.scale.height);
     });
+    this.input.on('pointerupoutside', resetInput);
     this.input.on('pointerup', () => {
       pointerVector.active = false;
       pointerVector.dx = 0;
@@ -202,7 +261,12 @@
   }
 
   let lastSent = 0;
-  function update(time) {
+  let frameDelta = 16;
+  const renderPositions = new Map();
+  function update(time, delta) {
+    frameDelta = delta;
+    inputVector.work = Boolean(playerId && (workHeld || spaceKey?.isDown));
+    workButton.classList.toggle('working', inputVector.work);
     const combinedDx = pointerVector.dx + keyboardVector.dx;
     const combinedDy = pointerVector.dy + keyboardVector.dy;
     if (combinedDx === 0 && combinedDy === 0) {
@@ -214,7 +278,7 @@
       inputVector.dy = combinedDy / len;
     }
 
-    if (time - lastSent > 33) {
+    if (playerId && socket.connected && time - lastSent > 50) {
       socket.emit('input', inputVector);
       lastSent = time;
     }
@@ -239,17 +303,27 @@
 
     cam.setBounds(0, 0, world.width, world.height);
 
-    const me = lastState.players.find((p) => p.id === playerId) || lastState.players[0];
+    const smoothed = lastState.players.map((p) => {
+      const previous = renderPositions.get(p.id);
+      const factor = Math.min(1, 1 - Math.exp(-frameDelta / 45));
+      const teleport = p.state === 'osteocyte' || !previous || Math.hypot(p.x - previous.x, p.y - previous.y) > 250;
+      const position = teleport ? { x: p.x, y: p.y } : { x: previous.x + (p.x - previous.x) * factor, y: previous.y + (p.y - previous.y) * factor };
+      renderPositions.set(p.id, position);
+      return { ...p, ...position };
+    });
+    const me = smoothed.find((p) => p.id === playerId);
     if (me) cam.centerOn(me.x, me.y);
 
-    drawCues();
+    drawTissue(scene);
+    drawCues(scene);
     drawPellets();
 
-    const players = [...lastState.players].sort((a, b) => a.mass - b.mass);
+    const players = smoothed;
     const active = new Set();
     for (const p of players) {
       active.add(p.id);
-      drawPlayer(scene, p);
+      if (isVisible(p.x, p.y, 100)) drawPlayer(scene, p);
+      else labelPool.get(p.id)?.setVisible(false);
       previousPositions.set(p.id, { x: p.x, y: p.y });
     }
 
@@ -259,60 +333,109 @@
     updateHud(me);
   }
 
+  function isVisible(x, y, radius = 0) {
+    const view = cam.worldView;
+    return x + radius >= view.x && x - radius <= view.right && y + radius >= view.y && y - radius <= view.bottom;
+  }
+
+  function worldLabel(scene, id, text, x, y, color) {
+    let label = worldLabelPool.get(id);
+    if (!label) {
+      label = scene.add.text(x, y, text, { fontFamily: 'Segoe UI, sans-serif', fontSize: 13,
+        color, backgroundColor: '#091b26', padding: { x: 6, y: 4 } }).setOrigin(.5).setDepth(50);
+      worldLabelPool.set(id, label);
+    }
+    label.setVisible(isVisible(x, y, 180));
+  }
+
+  function drawTissue(scene) {
+    if (!tissueData || tissueData.roomId !== lastState.roomId) return;
+    const { grid, patches } = tissueData;
+    worldLabel(scene, 'bone-left', 'EXISTING BONE', grid.x + grid.size * 2.5, grid.y - 18, '#eee2c5');
+    worldLabel(scene, 'bone-gap', 'REPAIR GAP · lay matrix, then mineralize', grid.x + grid.size * 9, grid.y - 18, '#7ce4cd');
+    worldLabel(scene, 'bone-right', 'EXISTING BONE', grid.x + grid.size * 15.5, grid.y - 18, '#eee2c5');
+    for (const patch of patches) {
+      const size = grid.size - 3;
+      if (!isVisible(patch.x, patch.y, grid.size)) continue;
+      const x = patch.x - size / 2, y = patch.y - size / 2;
+      gfx.fillStyle(0x18333d, .8); gfx.fillRoundedRect(x, y, size, size, 5);
+      gfx.lineStyle(1, 0x49606a, .3); gfx.strokeRoundedRect(x, y, size, size, 5);
+      if (patch.osteoid > .005 || patch.matrix > .005) {
+        gfx.fillStyle(0xb67c50, Math.min(.8, .15 + patch.osteoid * .6 + patch.matrix * .45));
+        gfx.fillRoundedRect(x + 2, y + 2, size - 4, size - 4, 4);
+        gfx.lineStyle(1.5, 0xf2bb87, .2 + patch.osteoid * .7);
+        for (let i = 0; i < 4; i++) gfx.lineBetween(x + 8, y + 14 + i * 12, x + size - 8, y + 9 + i * 12);
+      }
+      if (patch.mineral > .01) {
+        gfx.fillStyle(0xeee2c5, patch.mineral * .8);
+        gfx.fillRoundedRect(x + 3, y + 3, size - 6, size - 6, 4);
+        gfx.fillStyle(0xfff5db, patch.mineral * .5);
+        gfx.fillCircle(patch.x - 13, patch.y - 11, 3); gfx.fillCircle(patch.x + 13, patch.y + 15, 2);
+      }
+      if (patch.damage > .35 && patch.matrix > .01) {
+        gfx.lineStyle(2.5, 0xff7e91, .85);
+        gfx.beginPath(); gfx.moveTo(x + 24, y + 7); gfx.lineTo(x + 37, y + 25);
+        gfx.lineTo(x + 23, y + 38); gfx.lineTo(x + 40, y + size - 7); gfx.strokePath();
+      }
+      if (patch.formationSignal > .1 || patch.resorptionSignal > .1) {
+        gfx.lineStyle(2, patch.resorptionSignal > .1 ? 0xff7e91 : 0xb9a0f5, .7);
+        gfx.strokeRoundedRect(x + 1, y + 1, size - 2, size - 2, 4);
+      }
+    }
+    const me = lastState.players.find(p => p.id === playerId);
+    const target = patches[me?.patchId];
+    if (target) {
+      gfx.lineStyle(2.5, 0x7ce4cd, 1);
+      gfx.strokeRoundedRect(target.x - grid.size / 2, target.y - grid.size / 2, grid.size, grid.size, 5);
+    }
+  }
+
   function drawBackdrop(world) {
     const pad = 500;
-    gfx.fillStyle(0x060912, 1);
+    gfx.fillStyle(0x091b26, 1);
     gfx.fillRect(-pad, -pad, world.width + pad * 2, world.height + pad * 2);
-    gfx.lineStyle(2, 0x0f1728, 0.6);
+    gfx.lineStyle(2, 0x50cdb4, 0.6);
     gfx.strokeRect(0, 0, world.width, world.height);
   }
 
   function drawGrid(world) {
     const step = 200;
-    gfx.lineStyle(1, 0x182337, 0.45);
-    for (let x = -400; x <= world.width + 400; x += step) {
+    gfx.lineStyle(1, 0x244555, 0.45);
+    for (let x = Math.floor(cam.worldView.x / step) * step; x <= cam.worldView.right; x += step) {
       gfx.lineBetween(x, -400, x, world.height + 400);
     }
-    for (let y = -400; y <= world.height + 400; y += step) {
+    for (let y = Math.floor(cam.worldView.y / step) * step; y <= cam.worldView.bottom; y += step) {
       gfx.lineBetween(-400, y, world.width + 400, y);
     }
     const cx = world.width / 2;
     const cy = world.height / 2;
-    gfx.lineStyle(2, 0x20344f, 0.7);
+    gfx.lineStyle(2, 0x386372, 0.7);
     gfx.lineBetween(cx - world.width, cy, cx + world.width, cy);
     gfx.lineBetween(cx, cy - world.height, cx, cy + world.height);
   }
 
-  function drawCues() {
+  function drawCues(scene) {
     if (!lastState.cues) return;
-    const time = Date.now();
+    const time = serverNow();
     for (const cue of lastState.cues) {
+      if (!isVisible(cue.x, cue.y, cue.r)) continue;
       const color = cueColor(cue.type);
+      worldLabel(scene, cue.id, cue.label, cue.x, cue.y - cue.r + 24, colorToCss(color));
       const pulse = 0.5 + 0.25 * Math.sin(time / 700 + cue.x * 0.01 + cue.y * 0.01);
       const fillAlpha = 0.12 + 0.1 * pulse;
       const strokeAlpha = 0.55 + 0.25 * pulse;
+      gfx.lineStyle(2, color, strokeAlpha);
+      gfx.fillStyle(color, fillAlpha * 0.65);
+      gfx.fillCircle(cue.x, cue.y, cue.r);
+      gfx.strokeCircle(cue.x, cue.y, cue.r);
+      const marker = { ...cue, r: 18 };
       switch (cue.shape) {
-        case 'circle':
-          gfx.lineStyle(3, color, strokeAlpha);
-          gfx.fillStyle(color, fillAlpha);
-          gfx.strokeCircle(cue.x, cue.y, cue.r);
-          gfx.fillCircle(cue.x, cue.y, cue.r);
-          break;
-        case 'square':
-          gfx.lineStyle(3, color, strokeAlpha);
-          gfx.fillStyle(color, fillAlpha);
-          gfx.strokeRect(cue.x - cue.r, cue.y - cue.r, cue.r * 2, cue.r * 2);
-          gfx.fillRect(cue.x - cue.r, cue.y - cue.r, cue.r * 2, cue.r * 2);
-          break;
-        case 'diamond':
-          drawCuePolygon(cue, 4, Math.PI / 4, color, strokeAlpha, fillAlpha);
-          break;
-        case 'hex':
-          drawCuePolygon(cue, 6, Math.PI / 6, color, strokeAlpha, fillAlpha);
-          break;
-        default:
-          drawCuePolygon(cue, 5, 0, color, strokeAlpha, fillAlpha);
-          break;
+        case 'circle': gfx.strokeCircle(cue.x, cue.y, 18); break;
+        case 'square': gfx.strokeRect(cue.x - 16, cue.y - 16, 32, 32); break;
+        case 'diamond': drawCuePolygon(marker, 4, 0, color, strokeAlpha, 0.25); break;
+        case 'hex': drawCuePolygon(marker, 6, Math.PI / 6, color, strokeAlpha, 0.25); break;
+        case 'triangle': drawCuePolygon(marker, 3, -Math.PI / 2, color, strokeAlpha, 0.25); break;
+        case 'capsule': gfx.strokeRoundedRect(cue.x - 22, cue.y - 12, 44, 24, 12); break;
       }
     }
   }
@@ -336,6 +459,7 @@
   function drawPellets() {
     if (!lastState?.pellets) return;
     for (const pellet of lastState.pellets) {
+      if (!isVisible(pellet.x, pellet.y, 15)) continue;
       const type = pelletMap.get(pellet.type);
       drawPelletMarker(pellet, type);
     }
@@ -346,7 +470,7 @@
     const y = pellet.y;
     const color = type?.color ?? 0xffe27a;
     const alpha = 0.88;
-    const sizeBase = type?.massGain || 1.6;
+    const sizeBase = 1.6;
     const radius = 5.5 + Math.min(3.5, sizeBase);
     const shape = type?.shape || 'circle';
     switch (shape) {
@@ -357,7 +481,7 @@
         gfx.strokeTriangle(x, y - radius, x + radius * 0.95, y + radius, x - radius * 0.95, y + radius);
         break;
       case 'diamond':
-        drawPelletPolygon(x, y, 4, radius * 1.05, Math.PI / 4, color, alpha);
+        drawPelletPolygon(x, y, 4, radius * 1.05, 0, color, alpha);
         break;
       case 'hex':
         drawPelletPolygon(x, y, 6, radius, Math.PI / 6, color, alpha);
@@ -400,12 +524,25 @@
     const outline = isMe ? 0xffffff : 0x1b2433;
     const alpha = isMe ? 1.0 : 0.85;
     const radius = clientRadius(player, cell);
-    const now = Date.now();
-    const invulnerable = player.invulnerableUntil && player.invulnerableUntil > now;
+    const invulnerable = false;
 
-    drawMotionTrail(player, color);
-    drawEffectAura(player, radius);
+    if (player.state !== 'osteocyte') drawMotionTrail(player, color);
+    if (player.state === 'osteocyte') {
+      gfx.lineStyle(1.5, color, .45);
+      for (let i = 0; i < 8; i++) {
+        const angle = i * Math.PI / 4;
+        const endX = player.x + Math.cos(angle) * 62;
+        const endY = player.y + Math.sin(angle) * 62;
+        gfx.lineBetween(player.x, player.y, endX, endY);
+        gfx.fillStyle(color, .55); gfx.fillCircle(endX, endY, 2);
+      }
+    }
+    if (player.working) { gfx.lineStyle(2, color, .7); gfx.strokeCircle(player.x, player.y, radius + 8); }
     drawCellBody(player, cell, radius, color, outline, alpha, invulnerable);
+    gfx.fillStyle(0x102c3b, 0.3);
+    gfx.fillCircle(player.x, player.y, radius * 0.3);
+    gfx.fillStyle(0xffffff, 0.3);
+    gfx.fillCircle(player.x - radius * 0.2, player.y - radius * 0.23, radius * 0.13);
     drawLabel(scene, player, radius);
   }
 
@@ -418,6 +555,14 @@
         break;
       case 'square':
         drawSquareCell(player, fillColor, outlineColor, alpha, outlineAlpha, radius);
+        break;
+      case 'multinucleated':
+        gfx.fillStyle(fillColor, alpha);
+        gfx.fillEllipse(player.x, player.y, radius * 2.5, radius * 1.7);
+        gfx.lineStyle(3, outlineColor, .85);
+        gfx.strokeEllipse(player.x, player.y, radius * 2.5, radius * 1.7);
+        gfx.fillStyle(0x6f354c, .6);
+        for (const [x, y] of [[-.6, -.2], [0, .25], [.55, -.2]]) gfx.fillCircle(player.x + x * radius, player.y + y * radius, radius * .23);
         break;
       case 'triangle':
         drawTriangleCell(player, fillColor, outlineColor, alpha, outlineAlpha, radius);
@@ -432,8 +577,7 @@
   }
 
   function drawCircleCell(player, fillColor, outlineColor, alpha, outlineAlpha, radius) {
-    const scale = player.morph === 'hypertrophic' ? 1.12 : player.morph === 'elongated' ? 1.05 : 1;
-    const r = radius * scale;
+    const r = radius;
     gfx.fillStyle(fillColor, alpha);
     gfx.fillCircle(player.x, player.y, r);
     gfx.lineStyle(3, outlineColor, outlineAlpha);
@@ -441,8 +585,7 @@
   }
 
   function drawSquareCell(player, fillColor, outlineColor, alpha, outlineAlpha, radius) {
-    const scale = player.morph === 'hypertrophic' ? 1.25 : 1.05;
-    const size = radius * 1.45 * scale;
+    const size = radius * 1.65;
     const half = size / 2;
     const corner = Math.min(12, size * 0.25);
     gfx.fillStyle(fillColor, alpha);
@@ -496,17 +639,6 @@
     gfx.lineBetween(prev.x, prev.y, player.x, player.y);
   }
 
-  function drawEffectAura(player, radius) {
-    const now = Date.now();
-    const active = Array.isArray(player.effects) ? player.effects.find((e) => e.expiresAt > now) : null;
-    if (!active) return;
-    const color = effectColors.get(active.kind) ?? 0x63e6be;
-    const pulse = 0.5 + 0.25 * Math.sin(now / 320 + player.x * 0.003 + player.y * 0.002);
-    const r = radius * (1.25 + pulse * 0.18);
-    gfx.lineStyle(3, color, 0.5 + pulse * 0.25);
-    gfx.strokeCircle(player.x, player.y, r);
-  }
-
   function getMovementAngle(player) {
     const prev = previousPositions.get(player.id);
     if (!prev) return null;
@@ -526,17 +658,18 @@
     if (Math.abs(dx) + Math.abs(dy) < 0.05) { dx = 1; dy = 0; }
     const px = -dy; // perpendicular
     const py = dx;
-    const halfLen = radius * 1.2;
+    const halfLen = radius * 0.7;
     const halfThick = radius * 0.55;
-    const p1 = { x: player.x + dx * halfLen + px * halfThick, y: player.y + dy * halfLen + py * halfThick };
-    const p2 = { x: player.x + dx * halfLen - px * halfThick, y: player.y + dy * halfLen - py * halfThick };
-    const p3 = { x: player.x - dx * halfLen - px * halfThick, y: player.y - dy * halfLen - py * halfThick };
-    const p4 = { x: player.x - dx * halfLen + px * halfThick, y: player.y - dy * halfLen + py * halfThick };
-    const pts = [p1, p2, p3, p4];
-    gfx.fillStyle(fillColor, alpha);
-    gfx.fillPoints(pts, true);
-    gfx.lineStyle(3, outlineColor, invulnerable ? 0.45 : 0.85);
-    gfx.strokePoints(pts, true);
+    const pts = [];
+    for (const side of [1, -1]) {
+      for (let i = 0; i <= 10; i++) {
+        const angle = -Math.PI / 2 + i * Math.PI / 10 + (side === -1 ? Math.PI : 0);
+        const localX = side * halfLen + Math.cos(angle) * halfThick;
+        const localY = Math.sin(angle) * halfThick;
+        pts.push({ x: player.x + dx * localX + px * localY, y: player.y + dy * localX + py * localY });
+      }
+    }
+    drawPolygonShape(pts, fillColor, outlineColor, alpha, invulnerable ? 0.45 : 0.85);
   }
 
   function drawLabel(scene, player, radius) {
@@ -551,12 +684,7 @@
       }).setOrigin(0.5, 1).setDepth(1500);
       labelPool.set(player.id, label);
     }
-    const mass = Number.isFinite(player.mass) ? Math.round(player.mass) : 0;
-    const minerals = Number.isFinite(player.mineralized) ? player.mineralized.toFixed(1) : '0.0';
-    const captures = player.captures ? (' *' + player.captures) : '';
-    const cell = cellMap.get(player.cellType);
-    const cellTag = cell ? (' [' + cell.label.split(' ')[0] + ']') : '';
-    label.setText(player.name + cellTag + ' m:' + mass + ' Ca:' + minerals + captures);
+    label.setText(`${player.name} · ${player.state === 'progenitor' ? 'MSC' : player.state}`);
     label.x = player.x;
     label.y = player.y - radius - 10;
     label.setVisible(true);
@@ -565,7 +693,9 @@
   function cleanupLabels(active) {
     for (const [id, text] of labelPool.entries()) {
       if (!active.has(id)) {
-        text.setVisible(false);
+        text.destroy();
+        labelPool.delete(id);
+        renderPositions.delete(id);
       }
     }
   }
@@ -602,9 +732,8 @@
       title.textContent = cell.label;
       const desc = document.createElement('small');
       desc.textContent = cell.description;
-      const mods = cell.modifiers || {};
       const traits = document.createElement('small');
-      traits.textContent = `Speed ${formatMod(mods.speed)} • Mineral ${formatMod(mods.mineral)} • Capture ${formatMod(mods.capture)}`;
+      traits.textContent = cell.lineage;
       btn.append(shape, title, desc, traits);
       btn.addEventListener('click', () => {
         selectedCellType = cell.id;
@@ -612,6 +741,8 @@
       });
       cellOptionsEl.appendChild(btn);
     }
+    roleSwitch.replaceChildren();
+    for (const cell of cellArchetypes) { const option = new Option(cell.label, cell.id); roleSwitch.add(option); }
     updateSelectedCellOption();
   }
 
@@ -634,6 +765,8 @@
         return `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><rect x="12" y="18" width="40" height="28" rx="14" fill="${fill}" stroke="${stroke}" stroke-width="3"/><rect x="20" y="26" width="24" height="12" rx="6" fill="${accent}"/></svg>`;
       case 'square':
         return `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><rect x="14" y="14" width="36" height="36" rx="8" fill="${fill}" stroke="${stroke}" stroke-width="3"/><rect x="22" y="22" width="20" height="20" rx="6" fill="${accent}"/></svg>`;
+      case 'multinucleated':
+        return `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><ellipse cx="32" cy="32" rx="26" ry="18" fill="${fill}" stroke="${stroke}" stroke-width="3"/><g fill="#6f354c"><circle cx="18" cy="29" r="5"/><circle cx="32" cy="37" r="5"/><circle cx="45" cy="27" r="5"/></g></svg>`;
       case 'triangle':
         return `<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><polygon points="32,8 56,54 8,54" fill="${fill}" stroke="${stroke}" stroke-width="3"/><polygon points="32,16 48,48 16,48" fill="${accent}"/></svg>`;
       case 'star':
@@ -648,119 +781,61 @@
     return `#${(value >>> 0).toString(16).padStart(6, '0')}`;
   }
 
-  function formatMod(value) {
-    if (!Number.isFinite(value)) return 'x1.00';
-    return 'x' + Number(value).toFixed(2);
-  }
-
   function updateHud(me) {
-    const board = lastState.scoreboard || {};
-    const totals = board.totals || { players: 0, biomass: 0, minerals: 0, captures: 0 };
-    const totalPlayers = totals.players || (lastState.players?.length || 0);
-    const meState = me ? `${me.state}/${me.morph}` : 'spectating';
-    const meMass = me ? formatNumber(me.mass, 1) : '0.0';
-    const meMinerals = me ? formatNumber(me.mineralized, 1) : '0.0';
-    const meCaptures = me && Number.isFinite(me.captures) ? me.captures : 0;
-    const meCell = me ? cellMap.get(me.cellType) : null;
-
-    const cuesCount = lastState.cues ? lastState.cues.length : 0;
-    const pelletsCount = lastState.pellets ? lastState.pellets.length : 0;
-    const leader = board.leader;
-    const leaderText = leader
-      ? `${leader.label.split(' ')[0]}:${formatNumber(leader.minerals, 1)}`
-      : 'No leader';
-    const cellSummaries = Object.entries(board)
-      .filter(([key]) => key !== 'totals' && key !== 'leader')
-      .map(([, info]) => `${info.label.split(' ')[0]}:${formatNumber(info.minerals, 1)}`)
-      .slice(0, 3)
-      .join(' ');
-    const totalsMineral = formatNumber(totals.minerals, 1);
-    const totalsCaptures = Number.isFinite(totals.captures) ? totals.captures : 0;
-    const meCellLabel = meCell ? meCell.label : 'Spectator';
-
-    const lines = [
-      `Room ${lastState.roomId} • Players ${totalPlayers} • Pellets ${pelletsCount} • Cues ${cuesCount}`,
-      `Culture Ca ${totalsMineral} • Captures ${totalsCaptures}` + (leader ? ` • Lead ${leaderText}` : ''),
-      `You ${meCellLabel} m:${meMass} Ca:${meMinerals} state:${meState} capt:${meCaptures}` + (cellSummaries ? ` • Cells ${cellSummaries}` : '')
-    ];
-    hudText.setText(lines);
-
-    if (!me) {
-      statusText.setVisible(false);
-      return;
-    }
-
-    const now = Date.now();
-    const invulnLeft = me.invulnerableUntil ? me.invulnerableUntil - now : 0;
-    if (now - (me.lastEatenAt || 0) < 2600) {
-      const seconds = Math.max(0, invulnLeft / 1000).toFixed(1);
-      statusText.setText(`You were resorbed! Invulnerable ${seconds}s`);
-      statusText.setColor('#ff6f91');
-      statusText.setVisible(true);
-      return;
-    }
-    if (invulnLeft > 0) {
-      const seconds = (invulnLeft / 1000).toFixed(1);
-      statusText.setText(`Invulnerable ${seconds}s`);
-      statusText.setColor('#7ea6ff');
-      statusText.setVisible(true);
-      return;
-    }
-
-    const primaryEffect = Array.isArray(me.effects) && me.effects.length
-      ? me.effects.reduce((best, effect) => (effect.expiresAt > (best?.expiresAt || 0) ? effect : best), null)
-      : null;
-    if (primaryEffect && primaryEffect.expiresAt > now) {
-      const seconds = ((primaryEffect.expiresAt - now) / 1000).toFixed(1);
-      const label = effectLabels.get(primaryEffect.kind) || primaryEffect.kind;
-      const color = colorToCss(effectColors.get(primaryEffect.kind) ?? 0x63e6be);
-      statusText.setText(`${label} ${seconds}s`);
-      statusText.setColor(color);
-      statusText.setVisible(true);
-      return;
-    }
-    if (me.lastPellet?.type) {
-      const pellet = pelletMap.get(me.lastPellet.type);
-      if (pellet) {
-        statusText.setText(`Last intake: ${pellet.label}`);
-        statusText.setColor('#e6eef7');
-        statusText.setVisible(true);
-        return;
-      }
-    }
+    if (!me) return;
+    const metrics = lastState.tissue?.metrics || {};
+    const r = me.resources;
+    const pct = n => `${Math.round((n || 0) * 100)}%`;
+    const label = (cellMap.get(me.cellType)?.label || me.state) + (me.state === 'progenitor' ? ` · Commitment ${pct(me.diffProgress)}` : '');
+    const supplyLine = `Energy ${pct(r.energy)} · Asc ${pct(r.ascorbate)} · Ca ${pct(r.calcium)} · Pi ${pct(r.phosphate)}`;
+    hudText.setText(window.innerWidth < 700 ? [
+      label, `Gap repair ${Math.round(metrics.gapRepair || 0)}% · O₂ ${pct(me.oxygen)}`,
+      `Energy ${pct(r.energy)} · Asc ${pct(r.ascorbate)}`, `Ca ${pct(r.calcium)} · Pi ${pct(r.phosphate)}`,
+    ] : [
+      `Room ${lastState.roomId} · ${lastState.players.length} collaborators · ${label}`,
+      `Gap repair ${Math.round(metrics.gapRepair || 0)}% · Tissue integrity ${Math.round(metrics.integrity || 0)}% · O₂ ${pct(me.oxygen)}`,
+      supplyLine,
+    ]);
     statusText.setVisible(false);
+    const patch = tissueData?.roomId === lastState.roomId ? tissueData.patches[me.patchId] : null;
+    sitePanel.hidden = false;
+    document.getElementById('cellActivity').textContent = me.activity;
+    document.getElementById('siteReadout').textContent = patch
+      ? `Site: osteoid ${pct(patch.osteoid)} · mature matrix ${pct(patch.matrix)} · mineral ${pct(patch.mineral)} · damage ${pct(patch.damage)}`
+      : 'Off scaffold · Red vessel zones refill supplies. Blue zones recruit mesenchymal cells.';
+    document.getElementById('cellContribution').textContent = `Your work: ${formatNumber(me.deposited, 1)} tiles of matrix laid · ${formatNumber(me.resorbed, 1)} resorbed · ${formatNumber(me.signaling, 1)} signal units`;
+    roleSwitch.value = me.cellType;
+    const live = lastState.round.phase === 'playing';
+    workButton.disabled = !live || me.state === 'progenitor';
+    workButton.textContent = me.state === 'progenitor' ? 'Recruit in a blue zone' : me.state === 'osteocyte' ? 'Hold: sense & signal' : me.state === 'osteoclast' ? 'Hold: resorb damage' : 'Hold: build osteoid';
+    roleSwitch.disabled = !live;
+    embedButton.disabled = !live || !['osteoblast', 'osteocyte'].includes(me.state);
+    embedButton.textContent = me.state === 'osteocyte' ? 'Observe next cell (E)' : 'Embed in bone (E)';
   }
 
   function renderRound() {
-    if (!lastState || !lastState.round) { roundHud.style.display = 'none'; return; }
+    if (!lastState?.round) { roundHud.style.display = 'none'; return; }
     const r = lastState.round;
-    const ms = Math.max(0, Math.floor(r.remainingMs || 0));
-    const mm = String(Math.floor(ms / 60000)).padStart(2, '0');
-    const ss = String(Math.floor((ms % 60000) / 1000)).padStart(2, '0');
-    const leader = lastState.scoreboard?.leader;
-    const leaderLine = leader ? `${leader.label.split(' ')[0]} lead ${formatNumber(leader.minerals, 1)} Ca` : 'No leader yet';
-    let phaseLabel = 'Lobby';
-    let timeLabel = 'Waiting to start';
-    if (r.phase === 'countdown') { phaseLabel = 'Countdown'; timeLabel = `Starts in ${ss}s`; }
-    else if (r.phase === 'playing') { phaseLabel = 'Round Live'; timeLabel = `Time left ${mm}:${ss}`; }
-    else if (r.phase === 'ended') { phaseLabel = 'Round Ended'; timeLabel = 'Review + restart'; }
-
-    roundHud.innerHTML = `
-      <div class="hud-line"><span class="pill">${phaseLabel}</span><strong>${timeLabel}</strong></div>
-      <div class="hud-line muted">Objective: bank minerals, ride cues, and dodge resorption.</div>
-      <div class="hud-line muted">Leader: ${leaderLine}</div>
-    `;
+    const elapsed = ['playing', 'countdown'].includes(r.phase) ? Math.max(0, serverNow() - lastState.t) : 0;
+    const ms = Math.max(0, Math.ceil(r.remainingMs - elapsed));
+    const time = `${String(Math.floor(ms / 60000)).padStart(2, '0')}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
+    const labels = { lobby: 'Waiting for host', countdown: `Starts in ${Math.ceil(ms / 1000)}s`, playing: `Repair time ${time}`,
+      ended: r.outcome === 'bridged' ? 'Bone bridge restored! Team success.' : 'Time up. Review the tissue and try again.' };
+    const loading = lastState.tissue?.loading || 'physiological';
+    const markup = `<div class="hud-line"><span class="pill">${r.phase === 'playing' ? 'Repair Live' : 'Bone repair'}</span><strong>${labels[r.phase]}</strong></div><div class="hud-line muted">Restore a continuous mineralized bridge · Loading: ${loading}</div>`;
+    if (markup !== lastRoundMarkup) { roundHud.innerHTML = markup; lastRoundMarkup = markup; }
     roundHud.style.display = 'block';
   }
 
   function cueColor(type) {
     switch (type) {
-      case 'growth': return 0x4cc9f0;
-      case 'nutrient': return 0x9ef01a;
-      case 'mineral': return 0xf8961e;
-      case 'mechanical': return 0xc77dff;
-      case 'hormonal': return 0xff6f91;
-      case 'flow': return 0x4361ee;
+      case 'growth': return 0x70c9ed;
+      case 'vascular': return 0xff7e91;
+      case 'nutrient': return 0x8fdba5;
+      case 'mineral': return 0xf7c66a;
+      case 'mechanical': return 0xb9a0f5;
+      case 'hormonal': return 0xff8b90;
+      case 'flow': return 0x63d8cd;
       default: return 0xffffff;
     }
   }
@@ -775,12 +850,7 @@
   }
 
   function clientRadius(player, cell) {
-    const base = 12 + Math.sqrt(player.mass || 0);
-    const info = cell || cellMap.get(player.cellType);
-    let radius = base * (info?.modifiers?.radius || 1);
-    if (player.morph === 'elongated') radius *= 1.25;
-    else if (player.morph === 'hypertrophic') radius *= 1.1;
-    return radius;
+    return 19 * (cell || cellMap.get(player.cellType))?.modifiers?.radius || 19;
   }
 
   function formatNumber(value, digits) {
