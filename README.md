@@ -11,6 +11,29 @@
 
 </details>
 
+
+# 🎮 Play OsteoGame Online
+
+**🦴 Repair bone. Work as a tissue. Play together.**
+
+Jump into a cooperative bone-repair challenge directly in your browser. Become an osteoblast, osteoclast, or another bone cell, coordinate with other players, and rebuild a fractured bone.
+
+<p align="center">
+  <a href="https://osteogame.onrender.com">
+    <img src="https://img.shields.io/badge/▶_PLAY_OSTEOGAME-ONLINE_NOW-22c55e?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Play OsteoGame Online">
+  </a>
+</p>
+
+<p align="center">
+  <strong>🌐 Free to play · 📱 Mobile friendly · 🤝 Multiplayer · 🚀 No installation</strong>
+</p>
+
+**How to play:** Open the website, create a room as host, and invite friends using a link or QR code. Choose your cell role and work together to repair the bone.
+
+> **Hosting note:** The game runs on a free server that may sleep when inactive. If the page takes a little longer to open, please wait for the server to wake up.
+
+---
+
 ## Run locally
 
 Use **Node.js 22+**:
